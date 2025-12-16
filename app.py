@@ -167,8 +167,8 @@ with st.container():
     st.markdown("### Global Settings")
     c1, c2, c3, c4 = st.columns(4)
     with c1: T_in = st.slider("Jahre (T)", 5, 20, 15, key="T_val")
-    with c2: M_in = st.number_input("Marktpotenzial (M)", 300, 10000, 500, step=50, key="M_val")
-    with c3: trig_in = st.slider("Trigger (< % Growth)", 0.01, 0.15, 0.05, key="trig_val")
+    with c2: M_in = st.number_input("Marktpotenzial (M)", 300, 100000, 500, step=50, key="M_val")
+    with c3: trig_in = st.slider("Trigger (< % Growth)", 0.01, 0.3, 0.05, key="trig_val")
     with c4: 
         st.write("")
         start_btn = st.button("Start Simulation", type="primary", use_container_width=True)
@@ -364,4 +364,5 @@ if st.session_state.simulation_results:
     if st.session_state.pdf_buffer:
         st.download_button("📄 PDF Report Download", st.session_state.pdf_buffer.getvalue(), 
                            f"Report_{datetime.datetime.now().strftime('%H%M')}.pdf", "application/pdf", use_container_width=True)
+
 
