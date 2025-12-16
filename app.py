@@ -106,7 +106,7 @@ def calculate_cochran_n(params_dict, T, mode='static', fallback=None, trigger=0.
     if E == 0: return 2000
     
     n_opt = (1.96 * std_dev / E) ** 2
-    return max(int(math.ceil(n_opt)), 1500) # Mindestens 1500 für gute Optik
+    return max(int(math.ceil(n_opt)), 5000) # Mindestens 5000 für gute Optik
 
 def get_tornado_data(base_params, ranges, T, mode, trigger, fallback_ranges):
     # Base Inputs (Mittelwerte)
@@ -149,7 +149,7 @@ def get_regression_sensitivity(df_inputs, y_values):
 
 # --- HISTORY ---
 with st.sidebar:
-    st.header("📜 History")
+    st.header("History")
     def restore():
         idx = st.session_state.hist_sel
         if idx is not None:
@@ -161,17 +161,17 @@ with st.sidebar:
         opts = {i: f"{e['timestamp']} (M={e['params'].get('M_val', '?')})" for i, e in enumerate(st.session_state.history)}
         st.selectbox("Wiederherstellen:", list(opts.keys()), format_func=lambda x: opts[x], key="hist_sel", index=None, on_change=restore)
 
-st.markdown("<h1 style='text-align: center;'>Valuing Digital Market Entry Strategies</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center;'>Valuing Market Entry Strategies</h1>", unsafe_allow_html=True)
 
 with st.container():
-    st.markdown("### 🌐 Globale Settings")
+    st.markdown("### Global Settings")
     c1, c2, c3, c4 = st.columns(4)
     with c1: T_in = st.slider("Jahre (T)", 5, 20, 15, key="T_val")
     with c2: M_in = st.number_input("Marktpotenzial (M)", 300, 10000, 500, step=50, key="M_val")
     with c3: trig_in = st.slider("Trigger (< % Growth)", 0.01, 0.15, 0.05, key="trig_val")
     with c4: 
         st.write("")
-        start_btn = st.button("🚀 Simulation starten", type="primary", use_container_width=True)
+        start_btn = st.button("Start Simulation", type="primary", use_container_width=True)
 
 st.markdown("---")
 
@@ -185,7 +185,7 @@ def range_in(lbl, min_v, max_v, sfx, stp=0.01, fmt="%.2f"):
             c2.number_input(f"{lbl} Max", value=st.session_state[k_max], step=stp, format=fmt, key=k_max))
 
 with col_left:
-    st.markdown("### 🔵 Option A: Standard (Fallback)")
+    st.markdown("### Option A: Standard (Fallback)")
     p_a = range_in("p", 0.005, 0.010, "a", 0.001, "%.3f")
     q_a = range_in("q", 0.15, 0.25, "a")
     c_a = range_in("C", 0.03, 0.05, "a")
@@ -195,7 +195,7 @@ with col_left:
     dcm_a = range_in("Delta Margin", 50.0, 100.0, "a", 10.0)
 
 with col_right:
-    st.markdown("### 🔴 Option B: Fighter (Start)")
+    st.markdown("### Option B: Fighter (Start)")
     p_b = range_in("p", 0.030, 0.050, "b", 0.001, "%.3f")
     q_b = range_in("q", 0.20, 0.30, "b")
     c_b = range_in("C", 0.08, 0.12, "b")
@@ -309,10 +309,10 @@ if start_btn:
 if st.session_state.simulation_results:
     res = st.session_state.simulation_results
     
-    st.markdown("### 📈 Analyse Ergebnisse")
+    st.markdown("### Output Analysis")
     
     # 1. PRÄZISE TABELLE (DataFrame)
-    st.markdown("#### Zusammenfassung (Exakte Werte)")
+    st.markdown("#### Summary of Results")
     summary_data = []
     for k, d in res.items():
         summary_data.append({
@@ -364,3 +364,4 @@ if st.session_state.simulation_results:
     if st.session_state.pdf_buffer:
         st.download_button("📄 PDF Report Download", st.session_state.pdf_buffer.getvalue(), 
                            f"Report_{datetime.datetime.now().strftime('%H%M')}.pdf", "application/pdf", use_container_width=True)
+
