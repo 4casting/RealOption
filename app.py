@@ -59,9 +59,9 @@ with st.container():
     with col_g1:
         T = st.slider("Zeitraum (T)", 5, 20, 15)
     with col_g2:
-        n_sim = st.number_input("Simulationen (n)", 100, 10000, 1000, step=100)
+        n_sim = st.number_input("Simulationen (n)", 5000, 100000, 10000, step=1000)
     with col_g3:
-        M_global = st.number_input("Marktpotenzial (M)", 300, 2000, 500, step=50)
+        M_global = st.number_input("Marktpotenzial (M)", 100, 2000000, 500, step=100)
     with col_g4:
         # Der Start-Button sitzt prominent oben rechts in der Leiste
         st.write("") # Platzhalter für Alignment
@@ -203,3 +203,4 @@ with col_center:
     
     else:
         st.info("👈 Bitte Parameter links/rechts anpassen und oben auf 'Starten' klicken.")
+
