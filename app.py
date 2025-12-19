@@ -176,7 +176,7 @@ page = st.sidebar.radio("Menü:", ["Simulation & Analyse", "Modell-Beschreibung"
 
 # --- SEITE: MODELL-BESCHREIBUNG ---
 if page == "Modell-Beschreibung":
-    st.title("📖 Detaillierte Modellbeschreibung")
+    st.title("Modellbeschreibung")
     st.markdown("""
     Diese Simulation basiert auf einem integrierten Bewertungsrahmen ("Integrated Valuation Framework"), der das **Synthesized Bass Diffusion Model** mit der **Real Options Analysis (ROA)** kombiniert.
     
@@ -215,10 +215,10 @@ if page == "Modell-Beschreibung":
     st.markdown("""
     Das Modell simuliert vier strategische Pfade gleichzeitig:
     
-    * **🔵 1. Standard (Option A):** Konservative Strategie (niedrige Investition, hohe Preise, geringes Wachstum). Dient als "sicherer Hafen".
-    * **🔴 2. Fighter (Option B):** Aggressive Strategie (niedrige Preise, hohes Marketing, hohes Risiko). Startpunkt für die dynamischen Optionen.
-    * **🟢 3. Switch Option (Option C):** Startet als "Fighter". Wenn das Wachstum enttäuscht, **wechselt** das Management zur "Standard"-Strategie (Preise rauf, Marketing runter).
-    * **⚫ 4. Abandon Option (Option D):** Startet als "Fighter". Wenn das Wachstum enttäuscht, wird das Projekt **sofort gestoppt** (Liquidation).
+    * **1. Standard (Option A):** Konservative Strategie (niedrige Investition, hohe Preise, geringes Wachstum). Dient als "sicherer Hafen".
+    * **2. Fighter (Option B):** Aggressive Strategie (niedrige Preise, hohes Marketing, hohes Risiko). Startpunkt für die dynamischen Optionen.
+    * **3. Switch Option (Option C):** Startet als "Fighter". Wenn das Wachstum enttäuscht, **wechselt** das Management zur "Standard"-Strategie (Preise rauf, Marketing runter).
+    * **4. Abandon Option (Option D):** Startet als "Fighter". Wenn das Wachstum enttäuscht, wird das Projekt **sofort gestoppt** (Liquidation).
     """)
     
     st.header("3. Ablauf einer Simulation (Schritt-für-Schritt)")
@@ -535,5 +535,6 @@ elif page == "Simulation & Analyse":
         if st.session_state.pdf_buffer:
             st.download_button("📄 PDF Report Download", st.session_state.pdf_buffer.getvalue(), 
                                f"Report_{datetime.datetime.now().strftime('%H%M')}.pdf", "application/pdf", use_container_width=True)
+
 
 
