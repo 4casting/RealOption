@@ -176,36 +176,81 @@ page = st.sidebar.radio("Menü:", ["Simulation & Analyse", "Modell-Beschreibung"
 
 # --- SEITE: MODELL-BESCHREIBUNG ---
 if page == "Modell-Beschreibung":
-    st.title("📖 Modellbeschreibung & Logik")
+    st.title("📖 Detaillierte Modellbeschreibung")
     st.markdown("""
-    Dieses Tool bewertet digitale Markteintrittsstrategien im B2B-Umfeld mithilfe einer **Real Options Analysis (ROA)**, 
-    die auf einem **Synthesized Bass Diffusion Model** basiert.
+    Diese Simulation basiert auf einem integrierten Bewertungsrahmen ("Integrated Valuation Framework"), der das **Synthesized Bass Diffusion Model** mit der **Real Options Analysis (ROA)** kombiniert.
+    
+    Das Ziel ist es, den Wert digitaler Markteintrittsstrategien im B2B-Großhandel unter Unsicherheit zu quantifizieren.
     """)
     
-    st.header("1. Die Strategien")
-    st.markdown("""
-    * **🔵 Option A (Standard):** Konservativer Ansatz. Hohe Preise (ARPU), wenig Marketingbudget (niedriges p, q), aber stabile Margen.
-    * **🔴 Option B (Fighter):** Aggressiver Ansatz. Niedrige Preise, hohes Marketing, hohes Risiko (Kannibalisierung).
-    * **🟢 Option C (Switch):** Startet als "Fighter". Wenn das Wachstum die Erwartungen (Trigger) verfehlt, wird auf "Standard" gewechselt (Preise rauf, Kosten runter).
-    * **⚫ Option D (Abandon):** Startet als "Fighter". Wenn das Wachstum enttäuscht, wird das Projekt sofort gestoppt.
+    st.header("1. Mathematischer Kern")
+    
+    st.subheader("A. Kundenwachstum (Forecasting Level)")
+    st.markdown(r"""
+    [cite_start]Das Kundenwachstum wird durch eine erweiterte Form des Bass-Modells berechnet, die speziell für wiederkehrende B2B-Geschäfte angepasst wurde. [cite: 15, 310]Im Gegensatz zum klassischen Bass-Modell (nur Erstkauf) berücksichtigt dieses Modell **Churn (Kundenabwanderung)**.
+    
+    $$N(t) = \underbrace{N(t-1) \cdot (1-C)}_{\text{Retention}} + \underbrace{\left( p + q \cdot \frac{N(t-1)}{M} \right) \cdot (M - N(t-1))}_{\text{Acquisition (Bass)}}$$
+    
+    * **$N(t)$**: Anzahl aktiver Kunden am Ende der Periode $t$.
+    * **$M$**: Marktpotenzial (Maximal erreichbare Kundenanzahl).
+    * **$p$ (Innovation)**: Externe Wachstumsrate (Marketing, Impulse).
+    * **$q$ (Imitation)**: Interne Wachstumsrate (Mundpropaganda, Netzwerkeffekte).
+    * **$C$ (Churn)**: Jährliche Abwanderungsrate des Bestands.
     """)
     
-    st.header("2. Der Switch-Mechanismus (Preisschock)")
-    st.markdown("""
-    Ein Wechsel von "Fighter" (billig) zu "Standard" (teuer) ist für Kunden schmerzhaft. Das Modell nutzt eine **Matrix**, um die Reaktion zu simulieren:
+    st.subheader("B. Finanzielle Bewertung (Financial Level)")
+    st.markdown(r"""
+    [cite_start][cite: 15, 311]Der monetäre Wert ($W$) jeder Periode berechnet sich aus dem Umsatz abzüglich der Kannibalisierungseffekte (Kunden, die vom profitableren traditionellen Kanal wechseln) und der Fixkosten.
     
-    * **$\Delta P$ (Preisanstieg):** Je höher der Preissprung, desto mehr Kunden springen ab.
-    * **Churn-Schock:** Ein sofortiger Verlust von Bestandskunden ($N_{t-1}$) im Moment des Wechsels.
-    * **q-Malus:** Eine langfristige Schädigung des Rufs (negativer Word-of-Mouth), der das zukünftige Wachstum bremst.
-    * **Grandfathering:** Wenn aktiviert, behalten Bestandskunden den alten Preis -> Kein Churn-Schock, aber verwässerter Umsatz.
+    $$W(t) = (N(t) \cdot ARPU) - (\Delta N(t) \cdot \kappa \cdot \Delta CM) - \text{Fixed Costs}$$
+    
+    * **$ARPU$**: Durchschnittlicher Umsatz pro Nutzer pro Jahr.
+    * **$\Delta N(t)$**: Anzahl der *neuen* Kunden in dieser Periode.
+    * **$\kappa$ (Kappa)**: Kannibalisierungsrate (Wie viel % der Neukunden kommen aus dem eigenen Stammgeschäft?).
+    * **$\Delta CM$**: Margenverlust pro kannibalisiertem Kunden (Differenz Marge Traditionell vs. Digital).
+    * **Fixed Costs**: Jährliche Betriebskosten (OpEx) der Plattform.
+    """)
+
+    st.header("2. Strategische Optionen & Logik")
+    st.markdown("""
+    Das Modell simuliert vier strategische Pfade gleichzeitig:
+    
+    * **🔵 1. Standard (Option A):** Konservative Strategie (niedrige Investition, hohe Preise, geringes Wachstum). Dient als "sicherer Hafen".
+    * **🔴 2. Fighter (Option B):** Aggressive Strategie (niedrige Preise, hohes Marketing, hohes Risiko). Startpunkt für die dynamischen Optionen.
+    * **🟢 3. Switch Option (Option C):** Startet als "Fighter". Wenn das Wachstum enttäuscht, **wechselt** das Management zur "Standard"-Strategie (Preise rauf, Marketing runter).
+    * **⚫ 4. Abandon Option (Option D):** Startet als "Fighter". Wenn das Wachstum enttäuscht, wird das Projekt **sofort gestoppt** (Liquidation).
     """)
     
-    st.header("3. Mathematische Formeln")
-    st.latex(r"N(t) = N(t-1) \cdot (1-C) + \left( p + q \cdot \frac{N(t-1)}{M} \right) \cdot (M - N(t-1))")
-    st.caption("Synthesized Bass Model mit Churn (C)")
+    st.header("3. Ablauf einer Simulation (Schritt-für-Schritt)")
+    st.info("Dieser Prozess wird in der Monte-Carlo-Simulation tausendfach wiederholt.")
     
-    st.latex(r"W(t) = (N(t) \cdot ARPU) - (\Delta N(t) \cdot \kappa \cdot \Delta CM) - \text{Fixkosten}")
-    st.caption("Net Value Contribution (Wertbeitrag)")
+    st.markdown("""
+    1.  **Initialisierung ($t=0$):** Alle Szenarien starten mit 1 Kunden.
+    2.  **Jahres-Schleife ($t=1 \dots T$):**
+        * Das Modell berechnet die *potenzielle* Akquise für das aktuelle Jahr basierend auf den aktuellen Parametern ($p, q, C$).
+        * **Trigger-Prüfung:** Das Modell prüft, ob die Performance unter den Erwartungen liegt.
+            * *Trigger:* Ist das durchschnittliche bisherige Wachstum kleiner als der Grenzwert (z.B. 5%)?
+            * *Zeitpunkt:* Entweder ab einem bestimmten Jahr (z.B. Jahr 3) oder fortlaufend.
+        * **Entscheidung (nur für Option C & D):**
+            * **Kein Trigger:** Strategie läuft unverändert weiter.
+            * **Trigger ausgelöst (Switch):**
+                1.  Preiserhöhung wird berechnet ($\Delta P$).
+                2.  **Preisschock:** Ein Teil der Bestandskunden ($N_{t-1}$) wandert sofort ab (abhängig von der Konfiguration der "Schock-Matrix").
+                3.  **Parameter-Wechsel:** Alle Parameter ($p, q, ARPU, Kosten$) werden auf die Werte der "Standard"-Strategie gesetzt.
+                4.  **Reputationsschaden:** Das neue $q$ wird reduziert (negativer Word-of-Mouth durch Preiserhöhung).
+            * **Trigger ausgelöst (Abandon):**
+                1.  Projekt wird beendet.
+                2.  Kundenbestand $N$ fällt auf 0.
+                3.  Umsatz und Kosten fallen auf 0.
+        * **Finale Berechnung:** Bestand und Finanzwert $W(t)$ für das Jahr werden festgeschrieben.
+    """)
+    
+    st.header("4. Parameter-Glossar & Konfiguration")
+    st.markdown("""
+    * **Grandfathering:** Wenn aktiviert, behalten Bestandskunden beim "Switch" ihren alten Preis. Das verhindert den "Churn-Schock", reduziert aber das Umsatzwachstum.
+    * **Preisschock-Matrix:** Definiert, wie empfindlich Kunden auf Preiserhöhungen beim Strategiewechsel reagieren (in 3 Zonen: Sicherheitszone, Warnzone, Gefahrenzone).
+    * **Cochran Sampling:** Die Anzahl der Simulationen wird automatisch berechnet, um statistisch signifikante Ergebnisse (95% Konfidenz, 1% Fehler) zu garantieren.
+    """)
 
 # --- SEITE: SIMULATION & ANALYSE ---
 elif page == "Simulation & Analyse":
@@ -465,7 +510,8 @@ elif page == "Simulation & Analyse":
         for k, d in res.items():
             summary_data.append({
                 "Szenario": k, "Runs": d['n'], "Mean (€)": f"{d['mean']:,.0f}", 
-                "VaR 5% (€)": f"{d['var5']:,.0f}", "Ausübung %": f"{d['exercise_rate']:.1f}%"
+                "StdDev (€)": f"{d['std']:,.0f}", "VaR 5% (€)": f"{d['var5']:,.0f}", 
+                "Ausübung %": f"{d['exercise_rate']:.1f}%"
             })
         st.dataframe(pd.DataFrame(summary_data).set_index("Szenario"), use_container_width=True)
 
