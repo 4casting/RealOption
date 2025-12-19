@@ -521,7 +521,7 @@ elif page == "Simulation & Analyse":
             fig_n, ax_n = plt.subplots(figsize=(6, 4))
             for n, d in res.items():
                 ax_n.plot(d["avg_N"], label=n, color=d["color"])
-                ax_n.fill_between(range(len(d["avg_N"])), d["p5_N"], d["p95_N"], color=d["color"], alpha=0.3)
+                ax_n.fill_between(range(len(d["avg_N"])), d["p5_N"], d["p95_N"], color=d["color"], alpha=0.1)
             ax_n.legend(); ax_n.grid(True, alpha=0.3); st.pyplot(fig_n)
         
         with c2:
@@ -529,12 +529,13 @@ elif page == "Simulation & Analyse":
             fig_w, ax_w = plt.subplots(figsize=(6, 4))
             for n, d in res.items():
                 ax_w.plot(d["avg_W"], label=n, color=d["color"])
-                ax_w.fill_between(range(len(d["avg_W"])), d["p5_W"], d["p95_W"], color=d["color"], alpha=0.3)
+                ax_w.fill_between(range(len(d["avg_W"])), d["p5_W"], d["p95_W"], color=d["color"], alpha=0.1)
             ax_w.legend(); ax_w.grid(True, alpha=0.3); st.pyplot(fig_w)
 
         if st.session_state.pdf_buffer:
             st.download_button("📄 PDF Report Download", st.session_state.pdf_buffer.getvalue(), 
                                f"Report_{datetime.datetime.now().strftime('%H%M')}.pdf", "application/pdf", use_container_width=True)
+
 
 
 
