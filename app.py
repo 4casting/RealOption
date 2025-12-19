@@ -421,12 +421,12 @@ elif page == "Simulation & Analyse":
             for n, d in res_store.items():
                 ax1.plot(d["avg_N"], label=n, color=d["color"])
                 ax1.fill_between(range(len(d["avg_N"])), d["p5_N"], d["p95_N"], color=d["color"], alpha=0.1)
-            ax1.set_title(f"Customer Adoption (Metric: {metric_in})"); ax1.legend(); ax1.grid(True, alpha=0.3)
+            ax1.set_title(f"Customer Adoption (Metric: {metric_in})"); ax1.legend(); ax1.grid(True, alpha=0.1)
             
             for n, d in res_store.items():
                 ax2.plot(d["avg_W"], label=n, color=d["color"])
                 ax2.fill_between(range(len(d["avg_W"])), d["p5_W"], d["p95_W"], color=d["color"], alpha=0.1)
-            ax2.set_title("Net Value Contribution"); ax2.grid(True, alpha=0.3)
+            ax2.set_title("Net Value Contribution"); ax2.grid(True, alpha=0.1)
             
             nms = list(res_store.keys()); mus = [res_store[n]["mean"] for n in nms]; sigs = [res_store[n]["std"] for n in nms]
             cols = [res_store[n]["color"] for n in nms]
@@ -535,6 +535,7 @@ elif page == "Simulation & Analyse":
         if st.session_state.pdf_buffer:
             st.download_button("📄 PDF Report Download", st.session_state.pdf_buffer.getvalue(), 
                                f"Report_{datetime.datetime.now().strftime('%H%M')}.pdf", "application/pdf", use_container_width=True)
+
 
 
 
