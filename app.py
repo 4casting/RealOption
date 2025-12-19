@@ -269,7 +269,7 @@ elif page == "Simulation & Analyse":
             opts = {i: f"{e['timestamp']} (M={e['params'].get('M_val', '?')})" for i, e in enumerate(st.session_state.history)}
             st.selectbox("Frühere Eingaben laden:", list(opts.keys()), format_func=lambda x: opts[x], key="hist_sel", index=None, on_change=restore)
 
-    st.markdown("<h1 style='text-align: center;'>Valuing Digital Market Entry Strategies</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center;'>Valuing Market Entry Pricing-Strategies and Real Options</h1>", unsafe_allow_html=True)
 
     # --- GLOBALE SETTINGS ---
     with st.container():
@@ -535,6 +535,7 @@ elif page == "Simulation & Analyse":
         if st.session_state.pdf_buffer:
             st.download_button("📄 PDF Report Download", st.session_state.pdf_buffer.getvalue(), 
                                f"Report_{datetime.datetime.now().strftime('%H%M')}.pdf", "application/pdf", use_container_width=True)
+
 
 
 
