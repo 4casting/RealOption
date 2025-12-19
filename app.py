@@ -258,7 +258,7 @@ elif page == "Simulation & Analyse":
     # --- HISTORY SIDEBAR ---
     with st.sidebar:
         st.markdown("---")
-        st.header("📜 Verlauf")
+        st.header("Verlauf")
         def restore():
             idx = st.session_state.hist_sel
             if idx is not None:
@@ -273,9 +273,9 @@ elif page == "Simulation & Analyse":
 
     # --- GLOBALE SETTINGS ---
     with st.container():
-        st.markdown("### 🌐 Globale Settings")
+        st.markdown("### Globale Settings")
         c1, c2, c3, c4 = st.columns([1, 1, 2, 1])
-        with c1: T_in = st.slider("Laufzeit (Jahre)", 5, 30, 15, key="T_val")
+        with c1: T_in = st.slider("Laufzeit (T)", 5, 30, 30, key="T_val")
         with c2: M_in = st.number_input("Marktpotenzial (M)", 300, 10000, 500, step=50, key="M_val")
         with c3:
             st.markdown("**Option Trigger (Abbruchbedingung)**")
@@ -284,14 +284,14 @@ elif page == "Simulation & Analyse":
             metric_in = st.selectbox("Metrik", ["share_of_m", "relative"], 
                                      format_func=lambda x: "Marktdurchdringung" if x == "share_of_m" else "Relatives Wachstum", key="metric_sel")
             c3_1, c3_2 = st.columns(2)
-            with c3_1: check_year_in = st.number_input("Start-Jahr", 1, T_in, 3, key="check_year_val")
+            with c3_1: check_year_in = st.number_input("Start-Periode", 1, T_in, 3, key="check_year_val")
             with c3_2: 
-                mx = 0.2 if metric_in == "share_of_m" else 2.0
+                mx = 0.5 if metric_in == "share_of_m" else 2.0
                 def_v = 0.03 if metric_in == "share_of_m" else 0.15
                 trig_val_in = st.slider("Grenzwert (<)", 0.0, mx, def_v, step=0.01, key="trig_val")
         with c4: 
             st.write(""); st.write("")
-            start_btn = st.button("🚀 Simulation starten", type="primary", use_container_width=True)
+            start_btn = st.button("Simulation starten", type="primary", use_container_width=True)
 
     # --- SWITCH MATRIX ---
     with st.expander("⚙️ Konfiguration: Kundenreaktion auf Preiserhöhung (Switch Matrix)", expanded=False):
@@ -339,7 +339,7 @@ elif page == "Simulation & Analyse":
                 c2.number_input(f"{lbl} Max", value=st.session_state[k_max], step=stp, format=fmt, key=k_max))
 
     with col_left:
-        st.markdown("### 🔵 Option A: Standard (Fallback)")
+        st.markdown("### Option A: Standard (Fallback)")
         p_a = range_in("p", 0.005, 0.010, "a", 0.001, "%.3f")
         q_a = range_in("q", 0.15, 0.25, "a")
         c_a = range_in("C", 0.03, 0.05, "a")
@@ -349,7 +349,7 @@ elif page == "Simulation & Analyse":
         dcm_a = range_in("Delta Margin", 50.0, 100.0, "a", 10.0)
 
     with col_right:
-        st.markdown("### 🔴 Option B: Fighter (Start)")
+        st.markdown("### Option B: Fighter (Start)")
         p_b = range_in("p", 0.030, 0.050, "b", 0.001, "%.3f")
         q_b = range_in("q", 0.20, 0.30, "b")
         c_b = range_in("C", 0.08, 0.12, "b")
@@ -504,7 +504,7 @@ elif page == "Simulation & Analyse":
     # --- ANZEIGE ---
     if st.session_state.simulation_results:
         res = st.session_state.simulation_results
-        st.markdown("### 📈 Ergebnisse")
+        st.markdown("### Ergebnisse")
         
         summary_data = []
         for k, d in res.items():
@@ -535,3 +535,4 @@ elif page == "Simulation & Analyse":
         if st.session_state.pdf_buffer:
             st.download_button("📄 PDF Report Download", st.session_state.pdf_buffer.getvalue(), 
                                f"Report_{datetime.datetime.now().strftime('%H%M')}.pdf", "application/pdf", use_container_width=True)
+
