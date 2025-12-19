@@ -278,7 +278,7 @@ elif page == "Simulation & Analyse":
         with c1: T_in = st.slider("Laufzeit (T)", 5, 30, 30, key="T_val")
         with c2: M_in = st.number_input("Marktpotenzial (M)", 300, 10000, 500, step=50, key="M_val")
         with c3:
-            st.markdown("**Option Trigger (Abbruchbedingung)**")
+            st.markdown("**Option Trigger (Bedingung Strategiewechsel)**")
             check_mode_in = st.selectbox("Wann prüfen?", ["specific", "continuous"], 
                                          format_func=lambda x: "Einmalig (bestimmtes Jahr)" if x == "specific" else "Fortlaufend (Jedes Jahr)", key="check_mode_sel")
             metric_in = st.selectbox("Metrik", ["share_of_m", "relative"], 
@@ -535,4 +535,5 @@ elif page == "Simulation & Analyse":
         if st.session_state.pdf_buffer:
             st.download_button("📄 PDF Report Download", st.session_state.pdf_buffer.getvalue(), 
                                f"Report_{datetime.datetime.now().strftime('%H%M')}.pdf", "application/pdf", use_container_width=True)
+
 
