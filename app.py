@@ -23,10 +23,11 @@ if 'pdf_buffer' not in st.session_state: st.session_state.pdf_buffer = None
 # ==========================================
 def run_simulation(M, p, q, C, ARPU, kappa, Delta_CM, Fixed_Cost, start, T, 
                    mode='static', trigger_val=0.05, fallback_params=None,
-                   check_mode='continuous', check_year=3, growth_metric='share_of_m'):
+                   check_mode='continuous', check_year=3, growth_metric='share_of_m',
+                   switch_shock=0.3): # NEU: switch_shock Parameter (30% Default)
     """
     Führt eine Monte-Carlo-Iteration durch.
-    growth_metric: 'share_of_m' (Delta N / M) oder 'relative' (Delta N / N_prev)
+    switch_shock: Prozentsatz der Kunden, die bei Preiserhöhung (Switch) sofort gehen.
     """
     N = [0.0] * T
     W = [0.0] * T
@@ -35,65 +36,77 @@ def run_simulation(M, p, q, C, ARPU, kappa, Delta_CM, Fixed_Cost, start, T,
     W[0] = N[0] * ARPU - Fixed_Cost
 
     option_exercised = False
+    project_is_dead = False # NEU: Status für Abandon
     
-    # Lokale Parameterkopien (für Switch wichtig)
+    # Lokale Parameterkopien
     curr_p, curr_q, curr_C = p, q, C
     curr_ARPU, curr_kappa, curr_Delta_CM = ARPU, kappa, Delta_CM
     curr_FC, curr_M = Fixed_Cost, M
 
-    # Historie der Wachstumsraten für Durchschnittsberechnung
     growth_history = []
 
     for t in range(1, T):
+        # 1. ABBRUCH-CHECK: Ist das Projekt tot?
+        if project_is_dead:
+            N[t] = 0.0
+            W[t] = 0.0 # Keine Fixkosten, kein Umsatz
+            continue # Springe direkt zum nächsten Jahr
+
         N_prev = N[t-1]
         
-        # --- 1. PROGNOSE FÜR DIESES JAHR ---
+        # --- 2. PROGNOSE (Vorläufig) ---
         potential_acquisition = (curr_p + curr_q * (N_prev / curr_M)) * (curr_M - N_prev)
         if potential_acquisition < 0: potential_acquisition = 0
         
-        # Welches Wachstum hätten wir dieses Jahr?
+        # Metrik berechnen
         if growth_metric == 'share_of_m':
-            # Methode A: Wachstum als % des Gesamtmarktes (Stabilere Werte, z.B. 2-5%)
             current_rate = potential_acquisition / curr_M
         else:
-            # Methode B: Relatives Wachstum zum Vorjahr (Explosive Werte am Anfang, z.B. 200%)
             current_rate = (potential_acquisition / N_prev) if N_prev > 0 else 0.0
 
-        # --- 2. TRIGGER PRÜFUNG ---
+        # --- 3. TRIGGER PRÜFUNG ---
         if mode != 'static' and not option_exercised:
             
-            # Soll geprüft werden?
             is_check_time = False
             if check_mode == 'specific' and t == check_year: is_check_time = True
             elif check_mode == 'continuous' and t >= check_year: is_check_time = True
             
             if is_check_time:
-                # Durchschnitt aller bisherigen Raten (inkl. aktueller Prognose)
                 all_rates = growth_history + [current_rate]
                 avg_growth = sum(all_rates) / len(all_rates) if all_rates else 0
                 
-                # TRIGGER BEDINGUNG
+                # TRIGGER AUSGELÖST
                 if avg_growth < trigger_val:
                     option_exercised = True
                     
                     if mode == 'switch' and fallback_params:
-                        # Switch auf Option A Parameter
+                        # --- LOGIK FÜR SWITCH & PREISSCHOCK ---
+                        
+                        # 1. Parameter übernehmen (Preise steigen, Marge steigt)
                         curr_p = fallback_params['p']; curr_q = fallback_params['q']
                         curr_C = fallback_params['C']; curr_ARPU = fallback_params['ARPU']
                         curr_kappa = fallback_params['kappa']; curr_Delta_CM = fallback_params['Delta_CM']
                         curr_FC = fallback_params['Fixed_Cost']
                         
-                        # Neuberechnung der Akquise mit neuen Parametern (sofortige Wirkung)
+                        # 2. DER SCHOCK: Kunden reagieren auf Preiserhöhung
+                        # Wir reduzieren den Bestand N_prev SOFORT, bevor wir weitermachen
+                        shock_loss = N_prev * switch_shock
+                        N_prev = N_prev - shock_loss # Bestand sinkt schlagartig
+                        if N_prev < 0: N_prev = 0
+                        
+                        # 3. Akquise mit neuen Werten (und reduziertem N_prev) neu berechnen
                         potential_acquisition = (curr_p + curr_q * (N_prev / curr_M)) * (curr_M - N_prev)
                         if potential_acquisition < 0: potential_acquisition = 0
                         
                     elif mode == 'abandon':
-                        # Abbruch: Churn auf 100%, Kosten auf 0
-                        curr_C = 1.0; curr_FC = 0
-                        potential_acquisition = 0 # Keine Neukunden mehr
+                        # --- LOGIK FÜR ABBRUCH ---
+                        project_is_dead = True
+                        N[t] = 0.0
+                        W[t] = 0.0 # Harter Cut auf 0
+                        continue # Jahr beenden
 
-        # --- 3. FINALE BERECHNUNG ---
-        # Wachstumsrate speichern (tatsächlich realisiert)
+        # --- 4. FINALE BERECHNUNG ---
+        # Wachstumsrate für Historie speichern
         realized_rate = 0
         if growth_metric == 'share_of_m':
             realized_rate = potential_acquisition / curr_M
@@ -101,7 +114,7 @@ def run_simulation(M, p, q, C, ARPU, kappa, Delta_CM, Fixed_Cost, start, T,
             realized_rate = (potential_acquisition / N_prev) if N_prev > 0 else 0.0
         growth_history.append(realized_rate)
 
-        # Bestand
+        # Bestand (Retention + Acquisition)
         retention = N_prev * (1 - curr_C)
         N[t] = retention + potential_acquisition
         if N[t] > curr_M: N[t] = curr_M
@@ -117,7 +130,7 @@ def run_simulation(M, p, q, C, ARPU, kappa, Delta_CM, Fixed_Cost, start, T,
 # 2. STATISTIK & HELPER
 # ==========================================
 def calculate_cochran_n(params_dict, T, mode='static', fallback=None, trigger=0.05, 
-                        c_mode='continuous', c_year=3, g_metric='share_of_m'):
+                        c_mode='continuous', c_year=3, g_metric='share_of_m', shock=0.0):
     pilot_n = 200
     results = []
     def get_val(v): return np.random.triangular(v[0], (v[0]+v[1])/2, v[1]) if isinstance(v, tuple) else v
@@ -126,32 +139,36 @@ def calculate_cochran_n(params_dict, T, mode='static', fallback=None, trigger=0.
         curr = {k: get_val(v) for k, v in params_dict.items()}
         curr_fb = {k: get_val(v) for k, v in fallback.items()} if fallback else None
         _, _, val, _ = run_simulation(**curr, start=1, T=T, mode=mode, trigger_val=trigger, 
-                                      fallback_params=curr_fb, check_mode=c_mode, check_year=c_year, growth_metric=g_metric)
+                                      fallback_params=curr_fb, check_mode=c_mode, check_year=c_year, 
+                                      growth_metric=g_metric, switch_shock=shock)
         results.append(val)
     
     std = np.std(results); mean = np.mean(results)
     if mean == 0: return 1000
-    E = abs(mean * 0.01) # 1% Genauigkeit
+    E = abs(mean * 0.01) 
     if E == 0: return 1000
     n = (1.96 * std / E) ** 2
     return max(int(math.ceil(n)), 1000)
 
-def get_tornado_data(base_params, ranges, T, mode, trigger, fallback_ranges, c_mode, c_year, g_metric):
+def get_tornado_data(base_params, ranges, T, mode, trigger, fallback_ranges, c_mode, c_year, g_metric, shock):
     def mid(v): return (v[0]+v[1])/2 if isinstance(v, tuple) else v
     base_inputs = {k: mid(v) for k, v in ranges.items()}
     fb_inputs = {k: mid(v) for k, v in fallback_ranges.items()} if fallback_ranges else None
     
     _, _, base_val, _ = run_simulation(**base_inputs, start=1, T=T, mode=mode, trigger_val=trigger, 
-                                       fallback_params=fb_inputs, check_mode=c_mode, check_year=c_year, growth_metric=g_metric)
+                                       fallback_params=fb_inputs, check_mode=c_mode, check_year=c_year, 
+                                       growth_metric=g_metric, switch_shock=shock)
     data = []
     for param, val_range in ranges.items():
         if not isinstance(val_range, tuple): continue
         low_inputs = base_inputs.copy(); low_inputs[param] = val_range[0]
         _, _, v_low, _ = run_simulation(**low_inputs, start=1, T=T, mode=mode, trigger_val=trigger, 
-                                        fallback_params=fb_inputs, check_mode=c_mode, check_year=c_year, growth_metric=g_metric)
+                                        fallback_params=fb_inputs, check_mode=c_mode, check_year=c_year, 
+                                        growth_metric=g_metric, switch_shock=shock)
         high_inputs = base_inputs.copy(); high_inputs[param] = val_range[1]
         _, _, v_high, _ = run_simulation(**high_inputs, start=1, T=T, mode=mode, trigger_val=trigger, 
-                                         fallback_params=fb_inputs, check_mode=c_mode, check_year=c_year, growth_metric=g_metric)
+                                         fallback_params=fb_inputs, check_mode=c_mode, check_year=c_year, 
+                                         growth_metric=g_metric, switch_shock=shock)
         data.append({"Parameter": param, "Low": v_low - base_val, "High": v_high - base_val, "Range": abs(v_high - v_low)})
     return pd.DataFrame(data).sort_values(by="Range", ascending=True), base_val
 
@@ -186,28 +203,28 @@ with st.container():
     with c2: M_in = st.number_input("Marktpotenzial (M)", 300, 10000, 500, step=50, key="M_val")
     
     with c3:
-        st.markdown("**Option Trigger Einstellungen**")
-        # 1. Modus (Wann prüfen?)
+        st.markdown("**Option Trigger & Schock**")
         check_mode_in = st.selectbox("Prüf-Zeitpunkt", 
                                      ["specific", "continuous"], 
                                      format_func=lambda x: "Einmalig (bestimmtes Jahr)" if x == "specific" else "Fortlaufend (Jedes Jahr)",
                                      key="check_mode_sel")
         
-        # 2. Metrik (Was prüfen?)
         metric_in = st.selectbox("Wachstums-Metrik",
                                  ["share_of_m", "relative"],
-                                 format_func=lambda x: "Marktdurchdringung pro Jahr (Delta N / M)" if x == "share_of_m" else "Relatives Wachstum (Delta N / N_alt)",
-                                 key="metric_sel",
-                                 help="Achtung: Relatives Wachstum ist am Anfang oft > 100%!")
+                                 format_func=lambda x: "Marktdurchdringung (Delta N / M)" if x == "share_of_m" else "Relatives Wachstum",
+                                 key="metric_sel")
         
         col_sub1, col_sub2 = st.columns(2)
         with col_sub1:
             check_year_in = st.number_input("Start-Jahr", 1, T_in, 3, key="check_year_val")
         with col_sub2:
-            # Slider passt sich der Metrik an
             max_val = 0.20 if metric_in == "share_of_m" else 2.0
             def_val = 0.03 if metric_in == "share_of_m" else 0.15
-            trig_val_in = st.slider("Trigger-Grenzwert (<)", 0.0, max_val, def_val, step=0.01, key="trig_val")
+            trig_val_in = st.slider("Trigger (<)", 0.0, max_val, def_val, step=0.01, key="trig_val")
+            
+        # NEU: Slider für Price Shock
+        shock_in = st.slider("Churn bei Strategiewechsel (Price Shock %)", 0.0, 0.8, 0.3, step=0.05, 
+                             help="Wie viele Kunden springen sofort ab, wenn von Fighter auf Standard gewechselt wird?")
 
     with c4: 
         st.write(""); st.write("")
@@ -245,7 +262,7 @@ with col_right:
     dcm_b = range_in("Delta Margin", 50.0, 100.0, "b", 10.0)
 
 # ==========================================
-# 4. EXECUTION
+# 4. AUSFÜHRUNG
 # ==========================================
 if start_btn:
     snap = {k: v for k, v in st.session_state.items() if "_min_" in k or "_max_" in k or k in ["T_val", "M_val", "trig_val", "check_mode_sel", "metric_sel"]}
@@ -257,8 +274,8 @@ if start_btn:
     with st.spinner("Berechne..."):
         n_A = calculate_cochran_n(params_A, T_in, 'static')
         n_B = calculate_cochran_n(params_B, T_in, 'static')
-        n_Sw = calculate_cochran_n(params_B, T_in, 'switch', fallback=params_A, trigger=trig_val_in, c_mode=check_mode_in, c_year=check_year_in, g_metric=metric_in)
-        n_Ab = calculate_cochran_n(params_B, T_in, 'abandon', trigger=trig_val_in, c_mode=check_mode_in, c_year=check_year_in, g_metric=metric_in)
+        n_Sw = calculate_cochran_n(params_B, T_in, 'switch', fallback=params_A, trigger=trig_val_in, c_mode=check_mode_in, c_year=check_year_in, g_metric=metric_in, shock=shock_in)
+        n_Ab = calculate_cochran_n(params_B, T_in, 'abandon', trigger=trig_val_in, c_mode=check_mode_in, c_year=check_year_in, g_metric=metric_in, shock=shock_in)
     
     res_store = {}; bar = st.progress(0)
     
@@ -277,7 +294,8 @@ if start_btn:
             curr = {k: rnd(v) for k, v in p_rng.items()}
             fb = {k: rnd(v) for k, v in fb_rng.items()} if fb_rng else None
             N_t, W_t, tot, exc = run_simulation(**curr, start=1, T=T_in, mode=mode, trigger_val=trig_val_in, 
-                                                fallback_params=fb, check_mode=check_mode_in, check_year=check_year_in, growth_metric=metric_in)
+                                                fallback_params=fb, check_mode=check_mode_in, check_year=check_year_in, 
+                                                growth_metric=metric_in, switch_shock=shock_in)
             sim_sums.append(tot); all_N.append(N_t); all_W.append(W_t); sim_inputs.append(curr)
             if exc: exercised_count += 1
             
@@ -288,7 +306,7 @@ if start_btn:
         p5_W = np.percentile(arr_W, 5, axis=0); p95_W = np.percentile(arr_W, 95, axis=0)
         
         df_in = pd.DataFrame(sim_inputs); df_in_reg = df_in.loc[:, df_in.std() > 0]
-        torn, base_v = get_tornado_data(None, p_rng, T_in, mode, trig_val_in, fb_rng, check_mode_in, check_year_in, metric_in)
+        torn, base_v = get_tornado_data(None, p_rng, T_in, mode, trig_val_in, fb_rng, check_mode_in, check_year_in, metric_in, shock_in)
         reg, r2 = (None, 0)
         if not df_in_reg.empty: reg, r2 = get_regression_sensitivity(df_in_reg, sim_sums)
 
@@ -334,7 +352,7 @@ if start_btn:
     st.session_state.pdf_buffer = buf
 
 # ==========================================
-# 5. ERGEBNIS-ANZEIGE
+# 5. ANZEIGE
 # ==========================================
 if st.session_state.simulation_results:
     res = st.session_state.simulation_results
@@ -343,11 +361,8 @@ if st.session_state.simulation_results:
     summary_data = []
     for k, d in res.items():
         summary_data.append({
-            "Szenario": k, 
-            "Runs": d['n'], 
-            "Mean (€)": f"{d['mean']:,.0f}", 
-            "VaR 5% (€)": f"{d['var5']:,.0f}",
-            "Ausübung %": f"{d['exercise_rate']:.1f}%" # Die neue Quote!
+            "Szenario": k, "Runs": d['n'], "Mean (€)": f"{d['mean']:,.0f}", 
+            "VaR 5% (€)": f"{d['var5']:,.0f}", "Ausübung %": f"{d['exercise_rate']:.1f}%"
         })
     st.dataframe(pd.DataFrame(summary_data).set_index("Szenario"), use_container_width=True)
 
