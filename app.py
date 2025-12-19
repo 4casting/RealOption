@@ -24,10 +24,10 @@ if 'pdf_buffer' not in st.session_state: st.session_state.pdf_buffer = None
 def run_simulation(M, p, q, C, ARPU, kappa, Delta_CM, Fixed_Cost, start, T, 
                    mode='static', trigger_val=0.05, fallback_params=None,
                    check_mode='continuous', check_year=3, growth_metric='share_of_m',
-                   switch_config=None): # NEU: switch_config Dictionary
+                   switch_config=None): # NEU: Konfiguration für die Switch-Matrix
     """
     Führt eine Monte-Carlo-Iteration durch.
-    switch_config: Enthält die Matrix für Schock-Werte und Grandfathering-Status.
+    switch_config: Dictionary mit Schwellenwerten und Auswirkungen (Churn/q) pro Zone.
     """
     N = [0.0] * T
     W = [0.0] * T
@@ -36,8 +36,9 @@ def run_simulation(M, p, q, C, ARPU, kappa, Delta_CM, Fixed_Cost, start, T,
     W[0] = N[0] * ARPU - Fixed_Cost
 
     option_exercised = False
-    project_is_dead = False
+    project_is_dead = False # Status für Abandon
     
+    # Lokale Parameterkopien
     curr_p, curr_q, curr_C = p, q, C
     curr_ARPU, curr_kappa, curr_Delta_CM = ARPU, kappa, Delta_CM
     curr_FC, curr_M = Fixed_Cost, M
@@ -45,24 +46,27 @@ def run_simulation(M, p, q, C, ARPU, kappa, Delta_CM, Fixed_Cost, start, T,
     growth_history = []
 
     for t in range(1, T):
-        # Abbruch-Check
+        # 1. ABBRUCH-CHECK (Abandon Option)
         if project_is_dead:
-            N[t] = 0.0; W[t] = 0.0
+            N[t] = 0.0
+            W[t] = 0.0 
             continue 
 
         N_prev = N[t-1]
         
-        # --- PROGNOSE ---
+        # --- 2. PROGNOSE (Vorläufig für Trigger-Prüfung) ---
         potential_acquisition = (curr_p + curr_q * (N_prev / curr_M)) * (curr_M - N_prev)
         if potential_acquisition < 0: potential_acquisition = 0
         
+        # Metrik berechnen
         if growth_metric == 'share_of_m':
             current_rate = potential_acquisition / curr_M
         else:
             current_rate = (potential_acquisition / N_prev) if N_prev > 0 else 0.0
 
-        # --- TRIGGER PRÜFUNG ---
+        # --- 3. TRIGGER PRÜFUNG & OPTIONSAUSÜBUNG ---
         if mode != 'static' and not option_exercised:
+            
             is_check_time = False
             if check_mode == 'specific' and t == check_year: is_check_time = True
             elif check_mode == 'continuous' and t >= check_year: is_check_time = True
@@ -71,32 +75,35 @@ def run_simulation(M, p, q, C, ARPU, kappa, Delta_CM, Fixed_Cost, start, T,
                 all_rates = growth_history + [current_rate]
                 avg_growth = sum(all_rates) / len(all_rates) if all_rates else 0
                 
+                # TRIGGER FEUERT
                 if avg_growth < trigger_val:
                     option_exercised = True
                     
                     if mode == 'switch' and fallback_params and switch_config:
-                        # 1. BERECHNUNG DES PREISSCHOCKS (Delta P)
+                        # --- LOGIK FÜR SWITCH MIT PREISSCHOCK-MATRIX ---
+                        
+                        # A) Berechne Preiserhöhung (Delta P)
                         target_ARPU = fallback_params['ARPU']
-                        delta_p = (target_ARPU - curr_ARPU) / curr_ARPU if curr_ARPU > 0 else 0
+                        # Schutz vor Division durch Null
+                        delta_p = (target_ARPU - curr_ARPU) / curr_ARPU if curr_ARPU > 0 else 0.0
                         
-                        # 2. ZONE BESTIMMEN
+                        # B) Bestimme die Zone (Treppenfunktion)
                         if delta_p <= switch_config['thresh_low']:
-                            zone = 'zone1' # Sicherheitszone
+                            zone_prefix = 'zone1' # Sicherheitszone
                         elif delta_p <= switch_config['thresh_high']:
-                            zone = 'zone2' # Warnzone
+                            zone_prefix = 'zone2' # Warnzone
                         else:
-                            zone = 'zone3' # Gefahrenzone
-                            
-                        # 3. WERTE AUSWÄHLEN (Grandfathering Ja/Nein?)
-                        use_gf = switch_config['grandfathering']
+                            zone_prefix = 'zone3' # Gefahrenzone
                         
-                        # Keys im Config Dictionary: 'shock_zone1_gf', 'q_mult_zone1_nogf', etc.
+                        # C) Wähle Werte basierend auf Grandfathering-Status
+                        use_gf = switch_config['grandfathering']
                         suffix = "_gf" if use_gf else "_nogf"
                         
-                        shock_factor = switch_config[f'shock_{zone}{suffix}']
-                        q_multiplier = switch_config[f'q_mult_{zone}{suffix}']
+                        # Hole die konfigurierten Strafen aus dem Dictionary
+                        shock_factor = switch_config[f'shock_{zone_prefix}{suffix}']
+                        q_multiplier = switch_config[f'q_mult_{zone_prefix}{suffix}']
                         
-                        # 4. PARAMETER ÜBERNEHMEN (Switch zu Option A)
+                        # D) Parameter-Switch (Wir übernehmen Standard-Werte von Option A)
                         curr_p = fallback_params['p']
                         curr_C = fallback_params['C']
                         curr_ARPU = fallback_params['ARPU']
@@ -104,25 +111,27 @@ def run_simulation(M, p, q, C, ARPU, kappa, Delta_CM, Fixed_Cost, start, T,
                         curr_Delta_CM = fallback_params['Delta_CM']
                         curr_FC = fallback_params['Fixed_Cost']
                         
-                        # WICHTIG: q ändern und DANN Multiplikator anwenden!
-                        # Wir nehmen das 'q' der Zielstrategie (Standard A) und verschlechtern es ggf.
+                        # E) Wende q-Malus an (auf das NEUE q der Standard-Strategie)
                         base_target_q = fallback_params['q']
                         curr_q = base_target_q * q_multiplier 
                         
-                        # 5. CHURN SCHOCK ANWENDEN (Bestand reduzieren)
-                        # Der Bestand N_prev sinkt sofort, bevor das Wachstum berechnet wird
+                        # F) Wende Churn-Schock an (Bestand sinkt sofort)
                         N_prev = N_prev * (1.0 - shock_factor)
+                        if N_prev < 0: N_prev = 0
                         
-                        # 6. Akquise neu berechnen mit neuen Parametern & reduziertem Bestand
+                        # G) Neuberechnung der Akquise für dieses Jahr
                         potential_acquisition = (curr_p + curr_q * (N_prev / curr_M)) * (curr_M - N_prev)
                         if potential_acquisition < 0: potential_acquisition = 0
                         
                     elif mode == 'abandon':
+                        # --- LOGIK FÜR ABBRUCH ---
                         project_is_dead = True
-                        N[t] = 0.0; W[t] = 0.0
+                        N[t] = 0.0
+                        W[t] = 0.0
                         continue
 
-        # --- FINALE BERECHNUNG ---
+        # --- 4. FINALE BERECHNUNG ---
+        # Wachstumsrate speichern
         realized_rate = 0
         if growth_metric == 'share_of_m':
             realized_rate = potential_acquisition / curr_M
@@ -130,10 +139,12 @@ def run_simulation(M, p, q, C, ARPU, kappa, Delta_CM, Fixed_Cost, start, T,
             realized_rate = (potential_acquisition / N_prev) if N_prev > 0 else 0.0
         growth_history.append(realized_rate)
 
+        # Bestand
         retention = N_prev * (1 - curr_C)
         N[t] = retention + potential_acquisition
         if N[t] > curr_M: N[t] = curr_M
         
+        # Wert
         revenue = N[t] * curr_ARPU
         cannib = potential_acquisition * curr_kappa * curr_Delta_CM
         W[t] = revenue - cannib - curr_FC
@@ -141,7 +152,7 @@ def run_simulation(M, p, q, C, ARPU, kappa, Delta_CM, Fixed_Cost, start, T,
     return N, W, sum(W), option_exercised
 
 # ==========================================
-# 2. STATISTIK HELPER
+# 2. STATISTIK & HELPER
 # ==========================================
 def calculate_cochran_n(params_dict, T, mode='static', fallback=None, trigger=0.05, 
                         c_mode='continuous', c_year=3, g_metric='share_of_m', sw_conf=None):
@@ -230,47 +241,48 @@ with st.container():
         st.write(""); st.write("")
         start_btn = st.button("🚀 Simulation starten", type="primary", use_container_width=True)
 
-# --- SWITCH LOGIC CONFIGURATION (EXPANDER) ---
-with st.expander("⚙️ Konfiguration: Preisschock & Kundenreaktion (Switch Logic)", expanded=False):
-    st.info("Definiere hier, wie Kunden auf den Preisanstieg beim Wechsel von Fighter (B) zu Standard (A) reagieren.")
+# --- SWITCH LOGIC CONFIGURATION (TREPPENFUNKTION) ---
+with st.expander("⚙️ Konfiguration: Kundenreaktion auf Preiserhöhung (Switch Matrix)", expanded=False):
+    st.info("Definiere die 'Strafen' für den Wechsel von Fighter (billig) zu Standard (teuer).")
     
-    # 1. Grandfathering Toggle
-    gf_active = st.checkbox("Grandfathering aktivieren? (Bestandskunden behalten alten Preis -> kein Churn)", value=False, key="gf_active")
+    # 1. Grandfathering Schalter
+    gf_active = st.checkbox("Grandfathering anwenden? (Bestandskunden behalten alten Preis -> kaum Churn)", value=False, key="gf_active")
     
-    # 2. Schwellenwerte für Zonen
+    # 2. Zonen-Grenzen definieren (Delta P)
+    st.markdown("**1. Definition der Zonen (Preisanstieg %)**")
     col_th1, col_th2 = st.columns(2)
-    with col_th1: thresh_low = st.number_input("Grenze Sicherheitszone (bis X % Preisanstieg)", 0.0, 1.0, 0.10, step=0.05, key="th_low")
-    with col_th2: thresh_high = st.number_input("Grenze Gefahrenzone (ab X % Preisanstieg)", 0.0, 1.0, 0.20, step=0.05, key="th_high")
+    with col_th1: thresh_low = st.number_input("Grenze Sicherheitszone (bis X %)", 0.0, 1.0, 0.10, step=0.05, key="th_low")
+    with col_th2: thresh_high = st.number_input("Grenze Gefahrenzone (ab X %)", 0.0, 1.0, 0.20, step=0.05, key="th_high")
     
     # 3. Matrix Eingabe
-    st.markdown("---")
+    st.markdown("**2. Auswirkungen pro Zone**")
     col_z1, col_z2, col_z3 = st.columns(3)
     
-    # Helper für Inputs
-    def zone_inputs(col, title, prefix):
+    def zone_inputs(col, title, prefix, def_shock, def_q):
         with col:
             st.markdown(f"**{title}**")
             st.caption("Ohne Grandfathering")
-            s_no = st.number_input(f"Churn Schock {prefix}", 0.0, 1.0, 0.02 if prefix=="1" else (0.1 if prefix=="2" else 0.3), key=f"s_no_{prefix}")
-            q_no = st.number_input(f"q-Multiplikator {prefix}", 0.0, 1.5, 1.0 if prefix=="1" else (0.8 if prefix=="2" else 0.5), key=f"q_no_{prefix}")
+            s_no = st.number_input(f"Churn Schock {prefix}", 0.0, 1.0, def_shock, key=f"s_no_{prefix}")
+            q_no = st.number_input(f"q-Faktor {prefix}", 0.0, 1.5, def_q, key=f"q_no_{prefix}", help="1.0 = Keine Änderung, <1.0 = Rufschaden")
             
             st.caption("Mit Grandfathering")
-            s_gf = st.number_input(f"Churn Schock {prefix} (GF)", 0.0, 1.0, 0.0, key=f"s_gf_{prefix}", disabled=True, help="Bei Grandfathering ist der Churn-Schock 0.")
-            q_gf = st.number_input(f"q-Multiplikator {prefix} (GF)", 0.0, 1.5, 1.0 if prefix=="1" else (0.95 if prefix=="2" else 0.8), key=f"q_gf_{prefix}")
+            s_gf = st.number_input(f"Churn {prefix} (GF)", 0.0, 1.0, 0.0, key=f"s_gf_{prefix}")
+            q_gf = st.number_input(f"q-Faktor {prefix} (GF)", 0.0, 1.5, def_q, key=f"q_gf_{prefix}")
             return s_no, q_no, s_gf, q_gf
 
-    # Inputs abholen
-    s1_no, q1_no, s1_gf, q1_gf = zone_inputs(col_z1, f"Sicherheitszone (<{thresh_low*100:.0f}%)", "1")
-    s2_no, q2_no, s2_gf, q2_gf = zone_inputs(col_z2, f"Warnzone ({thresh_low*100:.0f}-{thresh_high*100:.0f}%)", "2")
-    s3_no, q3_no, s3_gf, q3_gf = zone_inputs(col_z3, f"Gefahrenzone (>{thresh_high*100:.0f}%)", "3")
+    # Defaults: Zone 1 (Sanft), Zone 2 (Mittel), Zone 3 (Hart)
+    s1_no, q1_no, s1_gf, q1_gf = zone_inputs(col_z1, f"Sicherheitszone (<{thresh_low*100:.0f}%)", "1", 0.02, 1.0)
+    s2_no, q2_no, s2_gf, q2_gf = zone_inputs(col_z2, f"Warnzone ({thresh_low*100:.0f}-{thresh_high*100:.0f}%)", "2", 0.10, 0.8)
+    s3_no, q3_no, s3_gf, q3_gf = zone_inputs(col_z3, f"Gefahrenzone (>{thresh_high*100:.0f}%)", "3", 0.30, 0.5)
 
     # Config Dictionary bauen
     switch_config_dict = {
         'grandfathering': gf_active,
         'thresh_low': thresh_low, 'thresh_high': thresh_high,
-        'shock_zone1_nogf': s1_no, 'q_mult_zone1_nogf': q1_no, 'shock_zone1_gf': 0.0, 'q_mult_zone1_gf': q1_gf,
-        'shock_zone2_nogf': s2_no, 'q_mult_zone2_nogf': q2_no, 'shock_zone2_gf': 0.0, 'q_mult_zone2_gf': q2_gf,
-        'shock_zone3_nogf': s3_no, 'q_mult_zone3_nogf': q3_no, 'shock_zone3_gf': 0.0, 'q_mult_zone3_gf': q3_gf,
+        # Mapping der Werte
+        'shock_zone1_nogf': s1_no, 'q_mult_zone1_nogf': q1_no, 'shock_zone1_gf': s1_gf, 'q_mult_zone1_gf': q1_gf,
+        'shock_zone2_nogf': s2_no, 'q_mult_zone2_nogf': q2_no, 'shock_zone2_gf': s2_gf, 'q_mult_zone2_gf': q2_gf,
+        'shock_zone3_nogf': s3_no, 'q_mult_zone3_nogf': q3_no, 'shock_zone3_gf': s3_gf, 'q_mult_zone3_gf': q3_gf,
     }
 
 st.markdown("---")
@@ -405,7 +417,8 @@ if st.session_state.simulation_results:
     for k, d in res.items():
         summary_data.append({
             "Szenario": k, "Runs": d['n'], "Mean (€)": f"{d['mean']:,.0f}", 
-            "VaR 5% (€)": f"{d['var5']:,.0f}", "Ausübung %": f"{d['exercise_rate']:.1f}%"
+            "StdDev (€)": f"{d['std']:,.0f}", "VaR 5% (€)": f"{d['var5']:,.0f}", 
+            "Ausübung %": f"{d['exercise_rate']:.1f}%"
         })
     st.dataframe(pd.DataFrame(summary_data).set_index("Szenario"), use_container_width=True)
 
