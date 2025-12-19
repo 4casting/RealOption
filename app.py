@@ -25,12 +25,8 @@ def run_simulation(M, p, q, C, ARPU, kappa, Delta_CM, Fixed_Cost, start, T,
                    mode='static', trigger_val=0.05, fallback_params=None,
                    check_mode='continuous', check_year=3, growth_metric='share_of_m',
                    switch_config=None):
-    """
-    Führt eine Monte-Carlo-Iteration durch.
-    """
     N = [0.0] * T
     W = [0.0] * T
-    
     N[0] = start
     W[0] = N[0] * ARPU - Fixed_Cost
 
@@ -73,24 +69,19 @@ def run_simulation(M, p, q, C, ARPU, kappa, Delta_CM, Fixed_Cost, start, T,
                     option_exercised = True
                     
                     if mode == 'switch' and fallback_params and switch_config:
-                        # Berechne Preisschock
                         target_ARPU = fallback_params['ARPU']
-                        # Div/0 Schutz
                         delta_p = (target_ARPU - curr_ARPU) / curr_ARPU if curr_ARPU > 0 else 0.0
                         
-                        # Zone bestimmen
                         if delta_p <= switch_config['thresh_low']: zone_prefix = 'zone1'
                         elif delta_p <= switch_config['thresh_high']: zone_prefix = 'zone2'
                         else: zone_prefix = 'zone3'
                         
-                        # Werte wählen (Grandfathering?)
                         use_gf = switch_config['grandfathering']
                         suffix = "_gf" if use_gf else "_nogf"
                         
                         shock_factor = switch_config[f'shock_{zone_prefix}{suffix}']
                         q_multiplier = switch_config[f'q_mult_{zone_prefix}{suffix}']
                         
-                        # Parameter Switch
                         curr_p = fallback_params['p']
                         curr_C = fallback_params['C']
                         curr_ARPU = fallback_params['ARPU']
@@ -98,15 +89,12 @@ def run_simulation(M, p, q, C, ARPU, kappa, Delta_CM, Fixed_Cost, start, T,
                         curr_Delta_CM = fallback_params['Delta_CM']
                         curr_FC = fallback_params['Fixed_Cost']
                         
-                        # q anpassen
                         base_target_q = fallback_params['q']
                         curr_q = base_target_q * q_multiplier 
                         
-                        # Churn Schock anwenden
                         N_prev = N_prev * (1.0 - shock_factor)
                         if N_prev < 0: N_prev = 0
                         
-                        # Neuberechnung Akquise
                         potential_acquisition = (curr_p + curr_q * (N_prev / curr_M)) * (curr_M - N_prev)
                         if potential_acquisition < 0: potential_acquisition = 0
                         
@@ -115,7 +103,6 @@ def run_simulation(M, p, q, C, ARPU, kappa, Delta_CM, Fixed_Cost, start, T,
                         N[t] = 0.0; W[t] = 0.0
                         continue
 
-        # --- FINALE BERECHNUNG ---
         realized_rate = 0
         if growth_metric == 'share_of_m':
             realized_rate = potential_acquisition / curr_M
@@ -141,7 +128,6 @@ def calculate_cochran_n(params_dict, T, mode='static', fallback=None, trigger=0.
     pilot_n = 200
     results = []
     def get_val(v): return np.random.triangular(v[0], (v[0]+v[1])/2, v[1]) if isinstance(v, tuple) else v
-    
     for _ in range(pilot_n):
         curr = {k: get_val(v) for k, v in params_dict.items()}
         curr_fb = {k: get_val(v) for k, v in fallback.items()} if fallback else None
@@ -149,7 +135,6 @@ def calculate_cochran_n(params_dict, T, mode='static', fallback=None, trigger=0.
                                       fallback_params=curr_fb, check_mode=c_mode, check_year=c_year, 
                                       growth_metric=g_metric, switch_config=sw_conf)
         results.append(val)
-    
     std = np.std(results); mean = np.mean(results)
     if mean == 0: return 1000
     E = abs(mean * 0.01) 
@@ -161,7 +146,6 @@ def get_tornado_data(base_params, ranges, T, mode, trigger, fallback_ranges, c_m
     def mid(v): return (v[0]+v[1])/2 if isinstance(v, tuple) else v
     base_inputs = {k: mid(v) for k, v in ranges.items()}
     fb_inputs = {k: mid(v) for k, v in fallback_ranges.items()} if fallback_ranges else None
-    
     _, _, base_val, _ = run_simulation(**base_inputs, start=1, T=T, mode=mode, trigger_val=trigger, 
                                        fallback_params=fb_inputs, check_mode=c_mode, check_year=c_year, 
                                        growth_metric=g_metric, switch_config=sw_conf)
@@ -185,298 +169,323 @@ def get_regression_sensitivity(df_inputs, y_values):
     return pd.DataFrame({"Parameter": df_inputs.columns, "Beta": model.coef_}).sort_values(by="Beta", key=abs, ascending=True), model.score(X_scaled, y_values)
 
 # ==========================================
-# 3. GUI EINGABEN
+# 3. NAVIGATION & SEITEN
 # ==========================================
-with st.sidebar:
-    st.header("📜 History")
-    def restore():
-        idx = st.session_state.hist_sel
-        if idx is not None:
-            entry = st.session_state.history[idx]
-            for k, v in entry['params'].items(): st.session_state[k] = v
-            st.toast(f"Wiederhergestellt: {entry['timestamp']}")
-    if st.session_state.history:
-        opts = {i: f"{e['timestamp']} (M={e['params'].get('M_val', '?')})" for i, e in enumerate(st.session_state.history)}
-        st.selectbox("Laden:", list(opts.keys()), format_func=lambda x: opts[x], key="hist_sel", index=None, on_change=restore)
+st.sidebar.title("Navigation")
+page = st.sidebar.radio("Menü:", ["Simulation & Analyse", "Modell-Beschreibung"])
 
-st.markdown("<h1 style='text-align: center;'>Valuing Digital Market Entry Strategies</h1>", unsafe_allow_html=True)
-
-# --- GLOBALE SETTINGS ---
-with st.container():
-    st.markdown("### 🌐 Globale Settings")
-    c1, c2, c3, c4 = st.columns([1, 1, 2, 1])
-    with c1: T_in = st.slider("Jahre (T)", 5, 30, 15, key="T_val")
-    with c2: M_in = st.number_input("Marktpotenzial (M)", 300, 10000, 500, step=50, key="M_val")
-    with c3:
-        st.markdown("**Option Trigger**")
-        check_mode_in = st.selectbox("Wann prüfen?", ["specific", "continuous"], 
-                                     format_func=lambda x: "Einmalig (bestimmtes Jahr)" if x == "specific" else "Fortlaufend", key="check_mode_sel")
-        metric_in = st.selectbox("Metrik", ["share_of_m", "relative"], 
-                                 format_func=lambda x: "Marktdurchdringung" if x == "share_of_m" else "Relatives Wachstum", key="metric_sel")
-        c3_1, c3_2 = st.columns(2)
-        with c3_1: check_year_in = st.number_input("Start-Jahr", 1, T_in, 3, key="check_year_val")
-        with c3_2: 
-            mx = 0.2 if metric_in == "share_of_m" else 2.0
-            def_v = 0.03 if metric_in == "share_of_m" else 0.15
-            trig_val_in = st.slider("Grenzwert (<)", 0.0, mx, def_v, step=0.01, key="trig_val")
-    with c4: 
-        st.write(""); st.write("")
-        start_btn = st.button("🚀 Simulation starten", type="primary", use_container_width=True)
-
-# --- SWITCH LOGIC CONFIGURATION ---
-with st.expander("⚙️ Konfiguration: Kundenreaktion auf Preiserhöhung (Switch Matrix)", expanded=False):
-    st.info("Definiere die 'Strafen' für den Wechsel von Fighter (billig) zu Standard (teuer).")
-    gf_active = st.checkbox("Grandfathering anwenden? (Bestandskunden behalten alten Preis -> kein Churn)", value=False, key="gf_active")
-    col_th1, col_th2 = st.columns(2)
-    with col_th1: thresh_low = st.number_input("Grenze Sicherheitszone (bis X %)", 0.0, 1.0, 0.10, step=0.05, key="th_low")
-    with col_th2: thresh_high = st.number_input("Grenze Gefahrenzone (ab X %)", 0.0, 1.0, 0.20, step=0.05, key="th_high")
+# --- SEITE: MODELL-BESCHREIBUNG ---
+if page == "Modell-Beschreibung":
+    st.title("📖 Modellbeschreibung & Logik")
+    st.markdown("""
+    Dieses Tool bewertet digitale Markteintrittsstrategien im B2B-Umfeld mithilfe einer **Real Options Analysis (ROA)**, 
+    die auf einem **Synthesized Bass Diffusion Model** basiert.
+    """)
     
-    st.markdown("**2. Auswirkungen pro Zone**")
-    col_z1, col_z2, col_z3 = st.columns(3)
-    def zone_inputs(col, title, prefix, def_shock, def_q):
-        with col:
-            st.markdown(f"**{title}**")
-            st.caption("Ohne Grandfathering")
-            s_no = st.number_input(f"Churn Schock {prefix}", 0.0, 1.0, def_shock, key=f"s_no_{prefix}")
-            q_no = st.number_input(f"q-Faktor {prefix}", 0.0, 1.5, def_q, key=f"q_no_{prefix}")
-            st.caption("Mit Grandfathering")
-            s_gf = st.number_input(f"Churn {prefix} (GF)", 0.0, 1.0, 0.0, key=f"s_gf_{prefix}", disabled=True)
-            q_gf = st.number_input(f"q-Faktor {prefix} (GF)", 0.0, 1.5, def_q, key=f"q_gf_{prefix}")
-            return s_no, q_no, s_gf, q_gf
-
-    s1_no, q1_no, s1_gf, q1_gf = zone_inputs(col_z1, f"Sicherheitszone (<{thresh_low*100:.0f}%)", "1", 0.02, 1.0)
-    s2_no, q2_no, s2_gf, q2_gf = zone_inputs(col_z2, f"Warnzone ({thresh_low*100:.0f}-{thresh_high*100:.0f}%)", "2", 0.10, 0.8)
-    s3_no, q3_no, s3_gf, q3_gf = zone_inputs(col_z3, f"Gefahrenzone (>{thresh_high*100:.0f}%)", "3", 0.30, 0.5)
-
-    switch_config_dict = {
-        'grandfathering': gf_active,
-        'thresh_low': thresh_low, 'thresh_high': thresh_high,
-        'shock_zone1_nogf': s1_no, 'q_mult_zone1_nogf': q1_no, 'shock_zone1_gf': s1_gf, 'q_mult_zone1_gf': q1_gf,
-        'shock_zone2_nogf': s2_no, 'q_mult_zone2_nogf': q2_no, 'shock_zone2_gf': s2_gf, 'q_mult_zone2_gf': q2_gf,
-        'shock_zone3_nogf': s3_no, 'q_mult_zone3_nogf': q3_no, 'shock_zone3_gf': s3_gf, 'q_mult_zone3_gf': q3_gf,
-    }
-
-st.markdown("---")
-
-col_left, col_right = st.columns(2)
-def range_in(lbl, min_v, max_v, sfx, stp=0.01, fmt="%.2f"):
-    c1, c2 = st.columns(2)
-    k_min, k_max = f"{lbl}_min_{sfx}", f"{lbl}_max_{sfx}"
-    if k_min not in st.session_state: st.session_state[k_min] = min_v
-    if k_max not in st.session_state: st.session_state[k_max] = max_v
-    return (c1.number_input(f"{lbl} Min", value=st.session_state[k_min], step=stp, format=fmt, key=k_min),
-            c2.number_input(f"{lbl} Max", value=st.session_state[k_max], step=stp, format=fmt, key=k_max))
-
-with col_left:
-    st.markdown("### 🔵 Option A: Standard (Fallback)")
-    p_a = range_in("p", 0.005, 0.010, "a", 0.001, "%.3f")
-    q_a = range_in("q", 0.15, 0.25, "a")
-    c_a = range_in("C", 0.03, 0.05, "a")
-    arpu_a = range_in("ARPU", 3800.0, 4200.0, "a", 100.0)
-    fc_a = range_in("Fixkosten", 140000.0, 160000.0, "a", 1000.0)
-    kap_a = range_in("Kappa", 0.05, 0.10, "a")
-    dcm_a = range_in("Delta Margin", 50.0, 100.0, "a", 10.0)
-
-with col_right:
-    st.markdown("### 🔴 Option B: Fighter (Start)")
-    p_b = range_in("p", 0.030, 0.050, "b", 0.001, "%.3f")
-    q_b = range_in("q", 0.20, 0.30, "b")
-    c_b = range_in("C", 0.08, 0.12, "b")
-    arpu_b = range_in("ARPU", 3000.0, 3500.0, "b", 100.0)
-    fc_b = range_in("Fixkosten", 180000.0, 200000.0, "b", 1000.0)
-    kap_b = range_in("Kappa", 0.10, 0.20, "b")
-    dcm_b = range_in("Delta Margin", 50.0, 100.0, "b", 10.0)
-
-# ==========================================
-# 4. AUSFÜHRUNG & PDF ERSTELLUNG
-# ==========================================
-if start_btn:
-    snap = {k: v for k, v in st.session_state.items() if "_min_" in k or "_max_" in k or k in ["T_val", "M_val", "trig_val", "gf_active"]}
-    st.session_state.history.append({'timestamp': datetime.datetime.now().strftime("%H:%M:%S"), 'params': snap})
+    st.header("1. Die Strategien")
+    st.markdown("""
+    * **🔵 Option A (Standard):** Konservativer Ansatz. Hohe Preise (ARPU), wenig Marketingbudget (niedriges p, q), aber stabile Margen.
+    * **🔴 Option B (Fighter):** Aggressiver Ansatz. Niedrige Preise, hohes Marketing, hohes Risiko (Kannibalisierung).
+    * **🟢 Option C (Switch):** Startet als "Fighter". Wenn das Wachstum die Erwartungen (Trigger) verfehlt, wird auf "Standard" gewechselt (Preise rauf, Kosten runter).
+    * **⚫ Option D (Abandon):** Startet als "Fighter". Wenn das Wachstum enttäuscht, wird das Projekt sofort gestoppt.
+    """)
     
-    params_A = {'M': (M_in*0.9, M_in*1.1), 'p': p_a, 'q': q_a, 'C': c_a, 'ARPU': arpu_a, 'kappa': kap_a, 'Delta_CM': dcm_a, 'Fixed_Cost': fc_a}
-    params_B = {'M': (M_in*0.9, M_in*1.1), 'p': p_b, 'q': q_b, 'C': c_b, 'ARPU': arpu_b, 'kappa': kap_b, 'Delta_CM': dcm_b, 'Fixed_Cost': fc_b}
+    st.header("2. Der Switch-Mechanismus (Preisschock)")
+    st.markdown("""
+    Ein Wechsel von "Fighter" (billig) zu "Standard" (teuer) ist für Kunden schmerzhaft. Das Modell nutzt eine **Matrix**, um die Reaktion zu simulieren:
     
-    with st.spinner("Berechne..."):
-        n_A = calculate_cochran_n(params_A, T_in, 'static')
-        n_B = calculate_cochran_n(params_B, T_in, 'static')
-        n_Sw = calculate_cochran_n(params_B, T_in, 'switch', fallback=params_A, trigger=trig_val_in, c_mode=check_mode_in, c_year=check_year_in, g_metric=metric_in, sw_conf=switch_config_dict)
-        n_Ab = calculate_cochran_n(params_B, T_in, 'abandon', trigger=trig_val_in, c_mode=check_mode_in, c_year=check_year_in, g_metric=metric_in, sw_conf=switch_config_dict)
+    * **$\Delta P$ (Preisanstieg):** Je höher der Preissprung, desto mehr Kunden springen ab.
+    * **Churn-Schock:** Ein sofortiger Verlust von Bestandskunden ($N_{t-1}$) im Moment des Wechsels.
+    * **q-Malus:** Eine langfristige Schädigung des Rufs (negativer Word-of-Mouth), der das zukünftige Wachstum bremst.
+    * **Grandfathering:** Wenn aktiviert, behalten Bestandskunden den alten Preis -> Kein Churn-Schock, aber verwässerter Umsatz.
+    """)
     
-    res_store = {}; bar = st.progress(0)
-    scenarios = [("1. Standard (A)", n_A, params_A, 'static', None, 'tab:blue'),
-                 ("2. Fighter (B)", n_B, params_B, 'static', None, 'tab:red'),
-                 ("3. Switch Option", n_Sw, params_B, 'switch', params_A, 'tab:green'),
-                 ("4. Abandon Option", n_Ab, params_B, 'abandon', None, 'black')]
+    st.header("3. Mathematische Formeln")
+    st.latex(r"N(t) = N(t-1) \cdot (1-C) + \left( p + q \cdot \frac{N(t-1)}{M} \right) \cdot (M - N(t-1))")
+    st.caption("Synthesized Bass Model mit Churn (C)")
     
-    def rnd(v): return np.random.triangular(v[0], (v[0]+v[1])/2, v[1]) if isinstance(v, tuple) else v
+    st.latex(r"W(t) = (N(t) \cdot ARPU) - (\Delta N(t) \cdot \kappa \cdot \Delta CM) - \text{Fixkosten}")
+    st.caption("Net Value Contribution (Wertbeitrag)")
 
-    for idx, (name, n, p_rng, mode, fb_rng, col) in enumerate(scenarios):
-        sim_sums, sim_inputs, all_N, all_W = [], [], [], []
-        exercised_count = 0
-        for _ in range(n):
-            curr = {k: rnd(v) for k, v in p_rng.items()}
-            fb = {k: rnd(v) for k, v in fb_rng.items()} if fb_rng else None
-            N_t, W_t, tot, exc = run_simulation(**curr, start=1, T=T_in, mode=mode, trigger_val=trig_val_in, 
-                                                fallback_params=fb, check_mode=check_mode_in, check_year=check_year_in, 
-                                                growth_metric=metric_in, switch_config=switch_config_dict)
-            sim_sums.append(tot); all_N.append(N_t); all_W.append(W_t); sim_inputs.append(curr)
-            if exc: exercised_count += 1
-        bar.progress((idx+1)/4)
+# --- SEITE: SIMULATION & ANALYSE ---
+elif page == "Simulation & Analyse":
+    
+    # --- HISTORY SIDEBAR ---
+    with st.sidebar:
+        st.markdown("---")
+        st.header("📜 Verlauf")
+        def restore():
+            idx = st.session_state.hist_sel
+            if idx is not None:
+                entry = st.session_state.history[idx]
+                for k, v in entry['params'].items(): st.session_state[k] = v
+                st.toast(f"Wiederhergestellt: {entry['timestamp']}")
+        if st.session_state.history:
+            opts = {i: f"{e['timestamp']} (M={e['params'].get('M_val', '?')})" for i, e in enumerate(st.session_state.history)}
+            st.selectbox("Frühere Eingaben laden:", list(opts.keys()), format_func=lambda x: opts[x], key="hist_sel", index=None, on_change=restore)
+
+    st.markdown("<h1 style='text-align: center;'>Valuing Digital Market Entry Strategies</h1>", unsafe_allow_html=True)
+
+    # --- GLOBALE SETTINGS ---
+    with st.container():
+        st.markdown("### 🌐 Globale Settings")
+        c1, c2, c3, c4 = st.columns([1, 1, 2, 1])
+        with c1: T_in = st.slider("Laufzeit (Jahre)", 5, 30, 15, key="T_val")
+        with c2: M_in = st.number_input("Marktpotenzial (M)", 300, 10000, 500, step=50, key="M_val")
+        with c3:
+            st.markdown("**Option Trigger (Abbruchbedingung)**")
+            check_mode_in = st.selectbox("Wann prüfen?", ["specific", "continuous"], 
+                                         format_func=lambda x: "Einmalig (bestimmtes Jahr)" if x == "specific" else "Fortlaufend (Jedes Jahr)", key="check_mode_sel")
+            metric_in = st.selectbox("Metrik", ["share_of_m", "relative"], 
+                                     format_func=lambda x: "Marktdurchdringung" if x == "share_of_m" else "Relatives Wachstum", key="metric_sel")
+            c3_1, c3_2 = st.columns(2)
+            with c3_1: check_year_in = st.number_input("Start-Jahr", 1, T_in, 3, key="check_year_val")
+            with c3_2: 
+                mx = 0.2 if metric_in == "share_of_m" else 2.0
+                def_v = 0.03 if metric_in == "share_of_m" else 0.15
+                trig_val_in = st.slider("Grenzwert (<)", 0.0, mx, def_v, step=0.01, key="trig_val")
+        with c4: 
+            st.write(""); st.write("")
+            start_btn = st.button("🚀 Simulation starten", type="primary", use_container_width=True)
+
+    # --- SWITCH MATRIX ---
+    with st.expander("⚙️ Konfiguration: Kundenreaktion auf Preiserhöhung (Switch Matrix)", expanded=False):
+        st.info("Definiere die 'Strafen' für den Wechsel von Fighter (billig) zu Standard (teuer).")
+        gf_active = st.checkbox("Grandfathering anwenden? (Bestandskunden behalten alten Preis -> kein Churn)", value=False, key="gf_active")
         
-        arr_N = np.array(all_N); arr_W = np.array(all_W)
-        p5_N = np.percentile(arr_N, 5, axis=0); p95_N = np.percentile(arr_N, 95, axis=0)
-        p5_W = np.percentile(arr_W, 5, axis=0); p95_W = np.percentile(arr_W, 95, axis=0)
+        col_th1, col_th2 = st.columns(2)
+        with col_th1: thresh_low = st.number_input("Grenze Sicherheitszone (bis X %)", 0.0, 1.0, 0.10, step=0.05, key="th_low")
+        with col_th2: thresh_high = st.number_input("Grenze Gefahrenzone (ab X %)", 0.0, 1.0, 0.20, step=0.05, key="th_high")
         
-        df_in = pd.DataFrame(sim_inputs); df_in_reg = df_in.loc[:, df_in.std() > 0]
-        torn, base_v = get_tornado_data(None, p_rng, T_in, mode, trig_val_in, fb_rng, check_mode_in, check_year_in, metric_in, switch_config_dict)
-        reg, r2 = (None, 0)
-        if not df_in_reg.empty: reg, r2 = get_regression_sensitivity(df_in_reg, sim_sums)
+        st.markdown("**Auswirkungen pro Zone**")
+        col_z1, col_z2, col_z3 = st.columns(3)
+        def zone_inputs(col, title, prefix, def_shock, def_q):
+            with col:
+                st.markdown(f"**{title}**")
+                st.caption("Ohne Grandfathering")
+                s_no = st.number_input(f"Churn Schock {prefix}", 0.0, 1.0, def_shock, key=f"s_no_{prefix}")
+                q_no = st.number_input(f"q-Faktor {prefix}", 0.0, 1.5, def_q, key=f"q_no_{prefix}")
+                st.caption("Mit Grandfathering")
+                s_gf = st.number_input(f"Churn {prefix} (GF)", 0.0, 1.0, 0.0, key=f"s_gf_{prefix}", disabled=True)
+                q_gf = st.number_input(f"q-Faktor {prefix} (GF)", 0.0, 1.5, def_q, key=f"q_gf_{prefix}")
+                return s_no, q_no, s_gf, q_gf
 
-        res_store[name] = {
-            "n": n, "sums": sim_sums, "avg_N": np.mean(all_N, axis=0), "avg_W": np.mean(all_W, axis=0),
-            "p5_N": p5_N, "p95_N": p95_N, "p5_W": p5_W, "p95_W": p95_W,
-            "tornado": (torn, base_v), "regression": (reg, r2), "color": col,
-            "mean": np.mean(sim_sums), "std": np.std(sim_sums), 
-            "min": np.min(sim_sums), "max": np.max(sim_sums), "var5": np.percentile(sim_sums, 5),
-            "exercise_rate": (exercised_count / n) * 100
+        s1_no, q1_no, s1_gf, q1_gf = zone_inputs(col_z1, f"Sicherheitszone (<{thresh_low*100:.0f}%)", "1", 0.02, 1.0)
+        s2_no, q2_no, s2_gf, q2_gf = zone_inputs(col_z2, f"Warnzone ({thresh_low*100:.0f}-{thresh_high*100:.0f}%)", "2", 0.10, 0.8)
+        s3_no, q3_no, s3_gf, q3_gf = zone_inputs(col_z3, f"Gefahrenzone (>{thresh_high*100:.0f}%)", "3", 0.30, 0.5)
+
+        switch_config_dict = {
+            'grandfathering': gf_active,
+            'thresh_low': thresh_low, 'thresh_high': thresh_high,
+            'shock_zone1_nogf': s1_no, 'q_mult_zone1_nogf': q1_no, 'shock_zone1_gf': s1_gf, 'q_mult_zone1_gf': q1_gf,
+            'shock_zone2_nogf': s2_no, 'q_mult_zone2_nogf': q2_no, 'shock_zone2_gf': s2_gf, 'q_mult_zone2_gf': q2_gf,
+            'shock_zone3_nogf': s3_no, 'q_mult_zone3_nogf': q3_no, 'shock_zone3_gf': s3_gf, 'q_mult_zone3_gf': q3_gf,
         }
-    st.session_state.simulation_results = res_store
 
-    # --- PDF GENERATOR ---
-    buf = io.BytesIO()
-    with PdfPages(buf) as pdf:
-        # SEITE 1: GRAFISCHE ÜBERSICHT
-        fig1, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(8.27, 11.69))
-        
-        for n, d in res_store.items():
-            ax1.plot(d["avg_N"], label=n, color=d["color"])
-            ax1.fill_between(range(len(d["avg_N"])), d["p5_N"], d["p95_N"], color=d["color"], alpha=0.3)
-        ax1.set_title(f"Customer Adoption (Metric: {metric_in})"); ax1.legend(); ax1.grid(True, alpha=0.3)
-        
-        for n, d in res_store.items():
-            ax2.plot(d["avg_W"], label=n, color=d["color"])
-            ax2.fill_between(range(len(d["avg_W"])), d["p5_W"], d["p95_W"], color=d["color"], alpha=0.3)
-        ax2.set_title("Net Value Contribution"); ax2.grid(True, alpha=0.3)
-        
-        nms = list(res_store.keys()); mus = [res_store[n]["mean"] for n in nms]; sigs = [res_store[n]["std"] for n in nms]
-        cols = [res_store[n]["color"] for n in nms]
-        bars = ax3.bar(nms, mus, yerr=sigs, capsize=5, alpha=0.7, color=cols)
-        ax3.bar_label(bars, fmt='€ %d', padding=3); ax3.set_title("Total Value Comparison"); ax3.set_ylabel("EUR")
-        plt.tight_layout(); pdf.savefig(fig1); plt.close(fig1)
+    st.markdown("---")
 
-        # SEITE 2: ERGEBNIS TABELLE
-        fig_tab, ax_tab = plt.subplots(figsize=(8.27, 11.69))
-        ax_tab.axis('off')
-        
-        table_data = [["Scenario", "Runs", "Mean (€)", "StdDev (€)", "VaR 5% (€)", "Exercise %"]]
-        for n, d in res_store.items():
-            table_data.append([
-                n, str(d['n']), f"{d['mean']:,.0f}", f"{d['std']:,.0f}", f"{d['var5']:,.0f}", f"{d['exercise_rate']:.1f}%"
-            ])
-        
-        table = ax_tab.table(cellText=table_data, loc='center', cellLoc='center', colWidths=[0.3, 0.1, 0.15, 0.15, 0.15, 0.15])
-        table.auto_set_font_size(False); table.set_fontsize(10); table.scale(1, 2)
-        ax_tab.set_title("Simulation Results Summary", fontweight='bold')
-        pdf.savefig(fig_tab); plt.close(fig_tab)
+    col_left, col_right = st.columns(2)
+    def range_in(lbl, min_v, max_v, sfx, stp=0.01, fmt="%.2f"):
+        c1, c2 = st.columns(2)
+        k_min, k_max = f"{lbl}_min_{sfx}", f"{lbl}_max_{sfx}"
+        if k_min not in st.session_state: st.session_state[k_min] = min_v
+        if k_max not in st.session_state: st.session_state[k_max] = max_v
+        return (c1.number_input(f"{lbl} Min", value=st.session_state[k_min], step=stp, format=fmt, key=k_min),
+                c2.number_input(f"{lbl} Max", value=st.session_state[k_max], step=stp, format=fmt, key=k_max))
 
-        # SEITE 3: INPUT PARAMETER & KONFIGURATION
-        fig_inp, ax_inp = plt.subplots(figsize=(8.27, 11.69))
-        ax_inp.axis('off')
+    with col_left:
+        st.markdown("### 🔵 Option A: Standard (Fallback)")
+        p_a = range_in("p", 0.005, 0.010, "a", 0.001, "%.3f")
+        q_a = range_in("q", 0.15, 0.25, "a")
+        c_a = range_in("C", 0.03, 0.05, "a")
+        arpu_a = range_in("ARPU", 3800.0, 4200.0, "a", 100.0)
+        fc_a = range_in("Fixkosten", 140000.0, 160000.0, "a", 1000.0)
+        kap_a = range_in("Kappa", 0.05, 0.10, "a")
+        dcm_a = range_in("Delta Margin", 50.0, 100.0, "a", 10.0)
+
+    with col_right:
+        st.markdown("### 🔴 Option B: Fighter (Start)")
+        p_b = range_in("p", 0.030, 0.050, "b", 0.001, "%.3f")
+        q_b = range_in("q", 0.20, 0.30, "b")
+        c_b = range_in("C", 0.08, 0.12, "b")
+        arpu_b = range_in("ARPU", 3000.0, 3500.0, "b", 100.0)
+        fc_b = range_in("Fixkosten", 180000.0, 200000.0, "b", 1000.0)
+        kap_b = range_in("Kappa", 0.10, 0.20, "b")
+        dcm_b = range_in("Delta Margin", 50.0, 100.0, "b", 10.0)
+
+    # --- SIMULATION ---
+    if start_btn:
+        snap = {k: v for k, v in st.session_state.items() if "_min_" in k or "_max_" in k or k in ["T_val", "M_val", "trig_val", "gf_active"]}
+        st.session_state.history.append({'timestamp': datetime.datetime.now().strftime("%H:%M:%S"), 'params': snap})
         
-        # Text Block für Globale Settings
-        info_text = f"""GLOBAL SETTINGS:
-        Time Horizon (T): {T_in} Years
-        Market Potential (M): {M_in}
-        Trigger Check: {check_mode_in} (Year {check_year_in})
-        Metric: {metric_in} < {trig_val_in}
+        params_A = {'M': (M_in*0.9, M_in*1.1), 'p': p_a, 'q': q_a, 'C': c_a, 'ARPU': arpu_a, 'kappa': kap_a, 'Delta_CM': dcm_a, 'Fixed_Cost': fc_a}
+        params_B = {'M': (M_in*0.9, M_in*1.1), 'p': p_b, 'q': q_b, 'C': c_b, 'ARPU': arpu_b, 'kappa': kap_b, 'Delta_CM': dcm_b, 'Fixed_Cost': fc_b}
         
-        SWITCH MATRIX CONFIGURATION:
-        Grandfathering: {switch_config_dict['grandfathering']}
-        Zone Thresholds: Low={switch_config_dict['thresh_low']:.2f}, High={switch_config_dict['thresh_high']:.2f}
+        with st.spinner("Berechne..."):
+            n_A = calculate_cochran_n(params_A, T_in, 'static')
+            n_B = calculate_cochran_n(params_B, T_in, 'static')
+            n_Sw = calculate_cochran_n(params_B, T_in, 'switch', fallback=params_A, trigger=trig_val_in, c_mode=check_mode_in, c_year=check_year_in, g_metric=metric_in, sw_conf=switch_config_dict)
+            n_Ab = calculate_cochran_n(params_B, T_in, 'abandon', trigger=trig_val_in, c_mode=check_mode_in, c_year=check_year_in, g_metric=metric_in, sw_conf=switch_config_dict)
         
-        Zone 1 (<{switch_config_dict['thresh_low']:.0%}): Shock={switch_config_dict['shock_zone1_nogf']:.2f}, q-Mult={switch_config_dict['q_mult_zone1_nogf']:.2f}
-        Zone 2 (Warn): Shock={switch_config_dict['shock_zone2_nogf']:.2f}, q-Mult={switch_config_dict['q_mult_zone2_nogf']:.2f}
-        Zone 3 (Danger): Shock={switch_config_dict['shock_zone3_nogf']:.2f}, q-Mult={switch_config_dict['q_mult_zone3_nogf']:.2f}
+        res_store = {}; bar = st.progress(0)
+        scenarios = [("1. Standard (A)", n_A, params_A, 'static', None, 'tab:blue'),
+                     ("2. Fighter (B)", n_B, params_B, 'static', None, 'tab:red'),
+                     ("3. Switch Option", n_Sw, params_B, 'switch', params_A, 'tab:green'),
+                     ("4. Abandon Option", n_Ab, params_B, 'abandon', None, 'black')]
         
-        SCENARIO PARAMETER RANGES (Min - Max):
-        """
-        
-        # Tabelle für Szenarien A und B
-        param_data = [["Param", "Option A (Standard)", "Option B (Fighter)"]]
-        keys = ['p', 'q', 'C', 'ARPU', 'kappa', 'Delta_CM', 'Fixed_Cost']
-        for k in keys:
-            val_a = f"{params_A[k][0]:.3f} - {params_A[k][1]:.3f}" if isinstance(params_A[k], tuple) else str(params_A[k])
-            val_b = f"{params_B[k][0]:.3f} - {params_B[k][1]:.3f}" if isinstance(params_B[k], tuple) else str(params_B[k])
-            param_data.append([k, val_a, val_b])
+        def rnd(v): return np.random.triangular(v[0], (v[0]+v[1])/2, v[1]) if isinstance(v, tuple) else v
+
+        for idx, (name, n, p_rng, mode, fb_rng, col) in enumerate(scenarios):
+            sim_sums, sim_inputs, all_N, all_W = [], [], [], []
+            exercised_count = 0
+            for _ in range(n):
+                curr = {k: rnd(v) for k, v in p_rng.items()}
+                fb = {k: rnd(v) for k, v in fb_rng.items()} if fb_rng else None
+                N_t, W_t, tot, exc = run_simulation(**curr, start=1, T=T_in, mode=mode, trigger_val=trig_val_in, 
+                                                    fallback_params=fb, check_mode=check_mode_in, check_year=check_year_in, 
+                                                    growth_metric=metric_in, switch_config=switch_config_dict)
+                sim_sums.append(tot); all_N.append(N_t); all_W.append(W_t); sim_inputs.append(curr)
+                if exc: exercised_count += 1
+            bar.progress((idx+1)/4)
             
-        ax_inp.text(0.05, 0.95, info_text, transform=ax_inp.transAxes, fontsize=10, va='top', family='monospace')
+            arr_N = np.array(all_N); arr_W = np.array(all_W)
+            p5_N = np.percentile(arr_N, 5, axis=0); p95_N = np.percentile(arr_N, 95, axis=0)
+            p5_W = np.percentile(arr_W, 5, axis=0); p95_W = np.percentile(arr_W, 95, axis=0)
+            
+            df_in = pd.DataFrame(sim_inputs); df_in_reg = df_in.loc[:, df_in.std() > 0]
+            torn, base_v = get_tornado_data(None, p_rng, T_in, mode, trig_val_in, fb_rng, check_mode_in, check_year_in, metric_in, switch_config_dict)
+            reg, r2 = (None, 0)
+            if not df_in_reg.empty: reg, r2 = get_regression_sensitivity(df_in_reg, sim_sums)
+
+            res_store[name] = {
+                "n": n, "sums": sim_sums, "avg_N": np.mean(all_N, axis=0), "avg_W": np.mean(all_W, axis=0),
+                "p5_N": p5_N, "p95_N": p95_N, "p5_W": p5_W, "p95_W": p95_W,
+                "tornado": (torn, base_v), "regression": (reg, r2), "color": col,
+                "mean": np.mean(sim_sums), "std": np.std(sim_sums), 
+                "min": np.min(sim_sums), "max": np.max(sim_sums), "var5": np.percentile(sim_sums, 5),
+                "exercise_rate": (exercised_count / n) * 100
+            }
+        st.session_state.simulation_results = res_store
+
+        # --- PDF GENERATOR ---
+        buf = io.BytesIO()
+        with PdfPages(buf) as pdf:
+            # SEITE 1: GRAFIKEN
+            fig1, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(8.27, 11.69))
+            
+            for n, d in res_store.items():
+                ax1.plot(d["avg_N"], label=n, color=d["color"])
+                ax1.fill_between(range(len(d["avg_N"])), d["p5_N"], d["p95_N"], color=d["color"], alpha=0.3)
+            ax1.set_title(f"Customer Adoption (Metric: {metric_in})"); ax1.legend(); ax1.grid(True, alpha=0.3)
+            
+            for n, d in res_store.items():
+                ax2.plot(d["avg_W"], label=n, color=d["color"])
+                ax2.fill_between(range(len(d["avg_W"])), d["p5_W"], d["p95_W"], color=d["color"], alpha=0.3)
+            ax2.set_title("Net Value Contribution"); ax2.grid(True, alpha=0.3)
+            
+            nms = list(res_store.keys()); mus = [res_store[n]["mean"] for n in nms]; sigs = [res_store[n]["std"] for n in nms]
+            cols = [res_store[n]["color"] for n in nms]
+            bars = ax3.bar(nms, mus, yerr=sigs, capsize=5, alpha=0.7, color=cols)
+            ax3.bar_label(bars, fmt='€ %d', padding=3); ax3.set_title("Total Value Comparison"); ax3.set_ylabel("EUR")
+            plt.tight_layout(); pdf.savefig(fig1); plt.close(fig1)
+
+            # SEITE 2: ERGEBNIS TABELLE
+            fig_tab, ax_tab = plt.subplots(figsize=(8.27, 11.69))
+            ax_tab.axis('off')
+            table_data = [["Scenario", "Runs", "Mean (€)", "StdDev (€)", "VaR 5% (€)", "Exercise %"]]
+            for n, d in res_store.items():
+                table_data.append([n, str(d['n']), f"{d['mean']:,.0f}", f"{d['std']:,.0f}", f"{d['var5']:,.0f}", f"{d['exercise_rate']:.1f}%"])
+            
+            table = ax_tab.table(cellText=table_data, loc='center', cellLoc='center', colWidths=[0.3, 0.1, 0.15, 0.15, 0.15, 0.15])
+            table.auto_set_font_size(False); table.set_fontsize(10); table.scale(1, 2)
+            ax_tab.set_title("Simulation Results Summary", fontweight='bold')
+            pdf.savefig(fig_tab); plt.close(fig_tab)
+
+            # SEITE 3: INPUT DOKUMENTATION
+            fig_inp, ax_inp = plt.subplots(figsize=(8.27, 11.69))
+            ax_inp.axis('off')
+            info_text = f"""GLOBAL SETTINGS:
+            Time Horizon (T): {T_in} Years
+            Market Potential (M): {M_in}
+            Trigger: {check_mode_in}, Year {check_year_in}
+            Metric: {metric_in} < {trig_val_in}
+            
+            SWITCH MATRIX CONFIGURATION:
+            Grandfathering: {switch_config_dict['grandfathering']}
+            Zone Thresholds: Low={switch_config_dict['thresh_low']:.2f}, High={switch_config_dict['thresh_high']:.2f}
+            
+            Zone 1 (<{switch_config_dict['thresh_low']:.0%}): Shock={switch_config_dict['shock_zone1_nogf']:.2f}, q-Mult={switch_config_dict['q_mult_zone1_nogf']:.2f}
+            Zone 2 (Warn): Shock={switch_config_dict['shock_zone2_nogf']:.2f}, q-Mult={switch_config_dict['q_mult_zone2_nogf']:.2f}
+            Zone 3 (Danger): Shock={switch_config_dict['shock_zone3_nogf']:.2f}, q-Mult={switch_config_dict['q_mult_zone3_nogf']:.2f}
+            
+            PARAMETER RANGES:
+            """
+            param_data = [["Param", "Option A (Standard)", "Option B (Fighter)"]]
+            keys = ['p', 'q', 'C', 'ARPU', 'kappa', 'Delta_CM', 'Fixed_Cost']
+            for k in keys:
+                val_a = f"{params_A[k][0]:.3f} - {params_A[k][1]:.3f}" if isinstance(params_A[k], tuple) else str(params_A[k])
+                val_b = f"{params_B[k][0]:.3f} - {params_B[k][1]:.3f}" if isinstance(params_B[k], tuple) else str(params_B[k])
+                param_data.append([k, val_a, val_b])
+            
+            ax_inp.text(0.05, 0.95, info_text, transform=ax_inp.transAxes, fontsize=10, va='top', family='monospace')
+            table_p = ax_inp.table(cellText=param_data, loc='center', bbox=[0.1, 0.25, 0.8, 0.3])
+            table_p.auto_set_font_size(False); table_p.set_fontsize(9)
+            pdf.savefig(fig_inp); plt.close(fig_inp)
+
+            # SEITEN 4+: DETAILS
+            for k, d in res_store.items():
+                fig, (ax_t, ax_h, ax_r) = plt.subplots(3, 1, figsize=(8.27, 11.69))
+                fig.suptitle(f"Detail: {k} (Exercise Rate: {d['exercise_rate']:.1f}%)", fontsize=16)
+                
+                df_t, b_v = d["tornado"]
+                if not df_t.empty and df_t['Range'].sum() > 0:
+                    y = np.arange(len(df_t))
+                    ax_t.barh(y, df_t["Low"], color='tab:red', alpha=0.6); ax_t.barh(y, df_t["High"], color='tab:green', alpha=0.6)
+                    ax_t.set_yticks(y); ax_t.set_yticklabels(df_t["Parameter"]); ax_t.invert_yaxis(); ax_t.axvline(0, c='k', ls='--')
+                    ax_t.set_title(f"Sensitivity (Tornado)")
+                else:
+                    ax_t.text(0.5, 0.5, "Keine Varianz (Deterministisch)", ha='center'); ax_t.set_axis_off()
+
+                ax_h.hist(d["sums"], bins=40, color='skyblue', edgecolor='white'); ax_h.set_title("Risk Profile")
+                
+                df_r, r2 = d["regression"]
+                if df_r is not None:
+                    clrs = ['tab:green' if c > 0 else 'tab:red' for c in df_r["Beta"]]
+                    ax_r.barh(df_r["Parameter"], df_r["Beta"], color=clrs)
+                    ax_r.set_title(f"Global Sensitivity (Beta) - R2={r2:.2f}")
+                plt.tight_layout(rect=[0, 0.03, 1, 0.95]); pdf.savefig(fig); plt.close(fig)
+        st.session_state.pdf_buffer = buf
+
+    # --- ANZEIGE ---
+    if st.session_state.simulation_results:
+        res = st.session_state.simulation_results
+        st.markdown("### 📈 Ergebnisse")
         
-        table_p = ax_inp.table(cellText=param_data, loc='center', bbox=[0.1, 0.1, 0.8, 0.4])
-        table_p.auto_set_font_size(False); table_p.set_fontsize(9)
+        summary_data = []
+        for k, d in res.items():
+            summary_data.append({
+                "Szenario": k, "Runs": d['n'], "Mean (€)": f"{d['mean']:,.0f}", 
+                "VaR 5% (€)": f"{d['var5']:,.0f}", "Ausübung %": f"{d['exercise_rate']:.1f}%"
+            })
+        st.dataframe(pd.DataFrame(summary_data).set_index("Szenario"), use_container_width=True)
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("#### Customer Evolution")
+            fig_n, ax_n = plt.subplots(figsize=(6, 4))
+            for n, d in res.items():
+                ax_n.plot(d["avg_N"], label=n, color=d["color"])
+                ax_n.fill_between(range(len(d["avg_N"])), d["p5_N"], d["p95_N"], color=d["color"], alpha=0.3)
+            ax_n.legend(); ax_n.grid(True, alpha=0.3); st.pyplot(fig_n)
         
-        pdf.savefig(fig_inp); plt.close(fig_inp)
+        with c2:
+            st.markdown("#### Net Value Contribution")
+            fig_w, ax_w = plt.subplots(figsize=(6, 4))
+            for n, d in res.items():
+                ax_w.plot(d["avg_W"], label=n, color=d["color"])
+                ax_w.fill_between(range(len(d["avg_W"])), d["p5_W"], d["p95_W"], color=d["color"], alpha=0.3)
+            ax_w.legend(); ax_w.grid(True, alpha=0.3); st.pyplot(fig_w)
 
-        # SEITEN 4+: DETAILS
-        for k, d in res_store.items():
-            fig, (ax_t, ax_h, ax_r) = plt.subplots(3, 1, figsize=(8.27, 11.69))
-            fig.suptitle(f"Detail: {k} (Exercise Rate: {d['exercise_rate']:.1f}%)", fontsize=16)
-            
-            # Tornado (Leeren Plot abfangen)
-            df_t, b_v = d["tornado"]
-            if not df_t.empty and df_t['Range'].sum() > 0:
-                y = np.arange(len(df_t))
-                ax_t.barh(y, df_t["Low"], color='tab:red', alpha=0.6); ax_t.barh(y, df_t["High"], color='tab:green', alpha=0.6)
-                ax_t.set_yticks(y); ax_t.set_yticklabels(df_t["Parameter"]); ax_t.invert_yaxis(); ax_t.axvline(0, c='k', ls='--')
-                ax_t.set_title(f"Sensitivity (Tornado)")
-            else:
-                ax_t.text(0.5, 0.5, "Keine Varianz (Deterministisches Ergebnis)", ha='center', va='center')
-                ax_t.set_axis_off()
-
-            ax_h.hist(d["sums"], bins=40, color='skyblue', edgecolor='white'); ax_h.set_title("Risk Profile")
-            
-            df_r, r2 = d["regression"]
-            if df_r is not None:
-                clrs = ['tab:green' if c > 0 else 'tab:red' for c in df_r["Beta"]]
-                ax_r.barh(df_r["Parameter"], df_r["Beta"], color=clrs)
-                ax_r.set_title(f"Global Sensitivity (Beta) - R2={r2:.2f}")
-            
-            plt.tight_layout(rect=[0, 0.03, 1, 0.95]); pdf.savefig(fig); plt.close(fig)
-            
-    st.session_state.pdf_buffer = buf
-
-# ==========================================
-# 5. ANZEIGE
-# ==========================================
-if st.session_state.simulation_results:
-    res = st.session_state.simulation_results
-    st.markdown("### 📈 Ergebnisse")
-    
-    summary_data = []
-    for k, d in res.items():
-        summary_data.append({
-            "Szenario": k, "Runs": d['n'], "Mean (€)": f"{d['mean']:,.0f}", 
-            "VaR 5% (€)": f"{d['var5']:,.0f}", "Ausübung %": f"{d['exercise_rate']:.1f}%"
-        })
-    st.dataframe(pd.DataFrame(summary_data).set_index("Szenario"), use_container_width=True)
-
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown("#### Customer Evolution")
-        fig_n, ax_n = plt.subplots(figsize=(6, 4))
-        for n, d in res.items():
-            ax_n.plot(d["avg_N"], label=n, color=d["color"])
-            ax_n.fill_between(range(len(d["avg_N"])), d["p5_N"], d["p95_N"], color=d["color"], alpha=0.3)
-        ax_n.legend(); ax_n.grid(True, alpha=0.3); st.pyplot(fig_n)
-    
-    with c2:
-        st.markdown("#### Net Value Contribution")
-        fig_w, ax_w = plt.subplots(figsize=(6, 4))
-        for n, d in res.items():
-            ax_w.plot(d["avg_W"], label=n, color=d["color"])
-            ax_w.fill_between(range(len(d["avg_W"])), d["p5_W"], d["p95_W"], color=d["color"], alpha=0.3)
-        ax_w.legend(); ax_w.grid(True, alpha=0.3); st.pyplot(fig_w)
-
-    if st.session_state.pdf_buffer:
-        st.download_button("📄 PDF Report Download", st.session_state.pdf_buffer.getvalue(), 
-                           f"Report_{datetime.datetime.now().strftime('%H%M')}.pdf", "application/pdf", use_container_width=True)
+        if st.session_state.pdf_buffer:
+            st.download_button("📄 PDF Report Download", st.session_state.pdf_buffer.getvalue(), 
+                               f"Report_{datetime.datetime.now().strftime('%H%M')}.pdf", "application/pdf", use_container_width=True)
