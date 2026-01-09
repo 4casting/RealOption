@@ -19,12 +19,17 @@ if 'simulation_results' not in st.session_state: st.session_state.simulation_res
 if 'pdf_buffer' not in st.session_state: st.session_state.pdf_buffer = None
 
 # ==========================================
-# 1. KERN-LOGIK (SIMULATION)
+# 1. KERN-LOGIK (SIMULATION MIT KOHORTEN)
 # ==========================================
 def run_simulation(M, p, q, C, ARPU, kappa, Delta_CM, Fixed_Cost, start, T, 
                    mode='static', trigger_val=0.05, fallback_params=None,
                    check_mode='continuous', check_year=3, growth_metric='share_of_m',
                    switch_config=None):
+    
+    # Initialsierung der Cohort Matrix: Zeilen = Startjahr (Wann kam Kunde?), Spalten = Laufzeitjahr (Aktuelles Jahr)
+    cohorts = np.zeros((T, T))
+    cohorts[0, 0] = start # Startbestand
+
     N = [0.0] * T
     W = [0.0] * T
     N[0] = start
@@ -44,7 +49,8 @@ def run_simulation(M, p, q, C, ARPU, kappa, Delta_CM, Fixed_Cost, start, T,
             N[t] = 0.0; W[t] = 0.0
             continue 
 
-        N_prev = N[t-1]
+        # Bestand aus Vorperiode berechnen (Summe aller noch aktiven Kohorten im Jahr t-1)
+        N_prev = np.sum(cohorts[:, t-1])
         
         # --- PROGNOSE ---
         potential_acquisition = (curr_p + curr_q * (N_prev / curr_M)) * (curr_M - N_prev)
@@ -55,7 +61,9 @@ def run_simulation(M, p, q, C, ARPU, kappa, Delta_CM, Fixed_Cost, start, T,
         else:
             current_rate = (potential_acquisition / N_prev) if N_prev > 0 else 0.0
 
-        # --- TRIGGER PRÜFUNG ---
+        # --- TRIGGER PRÜFUNG & OPTIONEN ---
+        shock_applied = 0.0 # Wie viel % des Bestands brechen weg? (für Switch Option)
+
         if mode != 'static' and not option_exercised:
             is_check_time = False
             if check_mode == 'specific' and t == check_year: is_check_time = True
@@ -82,6 +90,7 @@ def run_simulation(M, p, q, C, ARPU, kappa, Delta_CM, Fixed_Cost, start, T,
                         shock_factor = switch_config[f'shock_{zone_prefix}{suffix}']
                         q_multiplier = switch_config[f'q_mult_{zone_prefix}{suffix}']
                         
+                        # Neue Parameter setzen
                         curr_p = fallback_params['p']
                         curr_C = fallback_params['C']
                         curr_ARPU = fallback_params['ARPU']
@@ -92,10 +101,13 @@ def run_simulation(M, p, q, C, ARPU, kappa, Delta_CM, Fixed_Cost, start, T,
                         base_target_q = fallback_params['q']
                         curr_q = base_target_q * q_multiplier 
                         
-                        N_prev = N_prev * (1.0 - shock_factor)
-                        if N_prev < 0: N_prev = 0
+                        # Schock merken (wird unten auf Kohorten angewendet)
+                        shock_applied = shock_factor
                         
-                        potential_acquisition = (curr_p + curr_q * (N_prev / curr_M)) * (curr_M - N_prev)
+                        # Neuberechnung der Akquise mit "geschocktem" virtuellem Bestand
+                        # (Da wir N_prev noch nicht aktualisiert haben, simulieren wir den Schock hier kurz für die Bass-Formel)
+                        N_prev_sim = N_prev * (1.0 - shock_applied)
+                        potential_acquisition = (curr_p + curr_q * (N_prev_sim / curr_M)) * (curr_M - N_prev_sim)
                         if potential_acquisition < 0: potential_acquisition = 0
                         
                     elif mode == 'abandon':
@@ -103,22 +115,28 @@ def run_simulation(M, p, q, C, ARPU, kappa, Delta_CM, Fixed_Cost, start, T,
                         N[t] = 0.0; W[t] = 0.0
                         continue
 
-        realized_rate = 0
-        if growth_metric == 'share_of_m':
-            realized_rate = potential_acquisition / curr_M
-        else:
-            realized_rate = (potential_acquisition / N_prev) if N_prev > 0 else 0.0
-        growth_history.append(realized_rate)
+        growth_history.append(current_rate) # (vereinfacht, hier nehmen wir die Rate vor Schock für Historie)
 
-        retention = N_prev * (1 - curr_C)
-        N[t] = retention + potential_acquisition
+        # --- UPDATE KOHORTEN ---
+        # 1. Bestehende Kohorten altern lassen (Retention)
+        # Formel: Vorjahr * (1 - Preisschock) * (1 - Normaler Churn)
+        eff_retention = (1.0 - shock_applied) * (1.0 - curr_C)
+        
+        for start_year in range(t):
+            cohorts[start_year, t] = cohorts[start_year, t-1] * eff_retention
+            
+        # 2. Neue Kohorte hinzufügen
+        cohorts[t, t] = potential_acquisition
+        
+        # 3. Summe bilden
+        N[t] = np.sum(cohorts[:, t])
         if N[t] > curr_M: N[t] = curr_M
         
         revenue = N[t] * curr_ARPU
         cannib = potential_acquisition * curr_kappa * curr_Delta_CM
         W[t] = revenue - cannib - curr_FC
         
-    return N, W, sum(W), option_exercised
+    return N, W, sum(W), option_exercised, cohorts
 
 # ==========================================
 # 2. STATISTIK HELPER
@@ -131,9 +149,10 @@ def calculate_cochran_n(params_dict, T, mode='static', fallback=None, trigger=0.
     for _ in range(pilot_n):
         curr = {k: get_val(v) for k, v in params_dict.items()}
         curr_fb = {k: get_val(v) for k, v in fallback.items()} if fallback else None
-        _, _, val, _ = run_simulation(**curr, start=1, T=T, mode=mode, trigger_val=trigger, 
-                                      fallback_params=curr_fb, check_mode=c_mode, check_year=c_year, 
-                                      growth_metric=g_metric, switch_config=sw_conf)
+        # Unpacking nun mit 5 Variablen (dummy "_" für cohorts)
+        _, _, val, _, _ = run_simulation(**curr, start=1, T=T, mode=mode, trigger_val=trigger, 
+                                        fallback_params=curr_fb, check_mode=c_mode, check_year=c_year, 
+                                        growth_metric=g_metric, switch_config=sw_conf)
         results.append(val)
     std = np.std(results); mean = np.mean(results)
     if mean == 0: return 1000
@@ -146,20 +165,21 @@ def get_tornado_data(base_params, ranges, T, mode, trigger, fallback_ranges, c_m
     def mid(v): return (v[0]+v[1])/2 if isinstance(v, tuple) else v
     base_inputs = {k: mid(v) for k, v in ranges.items()}
     fb_inputs = {k: mid(v) for k, v in fallback_ranges.items()} if fallback_ranges else None
-    _, _, base_val, _ = run_simulation(**base_inputs, start=1, T=T, mode=mode, trigger_val=trigger, 
-                                       fallback_params=fb_inputs, check_mode=c_mode, check_year=c_year, 
-                                       growth_metric=g_metric, switch_config=sw_conf)
+    
+    _, _, base_val, _, _ = run_simulation(**base_inputs, start=1, T=T, mode=mode, trigger_val=trigger, 
+                                         fallback_params=fb_inputs, check_mode=c_mode, check_year=c_year, 
+                                         growth_metric=g_metric, switch_config=sw_conf)
     data = []
     for param, val_range in ranges.items():
         if not isinstance(val_range, tuple): continue
         low_inputs = base_inputs.copy(); low_inputs[param] = val_range[0]
-        _, _, v_low, _ = run_simulation(**low_inputs, start=1, T=T, mode=mode, trigger_val=trigger, 
-                                        fallback_params=fb_inputs, check_mode=c_mode, check_year=c_year, 
-                                        growth_metric=g_metric, switch_config=sw_conf)
+        _, _, v_low, _, _ = run_simulation(**low_inputs, start=1, T=T, mode=mode, trigger_val=trigger, 
+                                          fallback_params=fb_inputs, check_mode=c_mode, check_year=c_year, 
+                                          growth_metric=g_metric, switch_config=sw_conf)
         high_inputs = base_inputs.copy(); high_inputs[param] = val_range[1]
-        _, _, v_high, _ = run_simulation(**high_inputs, start=1, T=T, mode=mode, trigger_val=trigger, 
-                                         fallback_params=fb_inputs, check_mode=c_mode, check_year=c_year, 
-                                         growth_metric=g_metric, switch_config=sw_conf)
+        _, _, v_high, _, _ = run_simulation(**high_inputs, start=1, T=T, mode=mode, trigger_val=trigger, 
+                                           fallback_params=fb_inputs, check_mode=c_mode, check_year=c_year, 
+                                           growth_metric=g_metric, switch_config=sw_conf)
         data.append({"Parameter": param, "Low": v_low - base_val, "High": v_high - base_val, "Range": abs(v_high - v_low)})
     return pd.DataFrame(data).sort_values(by="Range", ascending=True), base_val
 
@@ -187,7 +207,7 @@ if page == "Modell-Beschreibung":
     
     st.subheader("A. Kundenwachstum (Forecasting Level)")
     st.markdown(r"""
-    [cite_start]Das Kundenwachstum wird durch eine erweiterte Form des Bass-Modells berechnet, die speziell für wiederkehrende B2B-Geschäfte angepasst wurde. [cite: 15, 310]Im Gegensatz zum klassischen Bass-Modell (nur Erstkauf) berücksichtigt dieses Modell **Churn (Kundenabwanderung)**.
+    Das Kundenwachstum wird durch eine erweiterte Form des Bass-Modells berechnet, die speziell für wiederkehrende B2B-Geschäfte angepasst wurde.Im Gegensatz zum klassischen Bass-Modell (nur Erstkauf) berücksichtigt dieses Modell **Churn (Kundenabwanderung)**.
     
     $$N(t) = \underbrace{N(t-1) \cdot (1-C)}_{\text{Retention}} + \underbrace{\left( p + q \cdot \frac{N(t-1)}{M} \right) \cdot (M - N(t-1))}_{\text{Acquisition (Bass)}}$$
     
@@ -200,7 +220,7 @@ if page == "Modell-Beschreibung":
     
     st.subheader("B. Finanzielle Bewertung (Financial Level)")
     st.markdown(r"""
-    [cite_start][cite: 15, 311]Der monetäre Wert ($W$) jeder Periode berechnet sich aus dem Umsatz abzüglich der Kannibalisierungseffekte (Kunden, die vom profitableren traditionellen Kanal wechseln) und der Fixkosten.
+    Der monetäre Wert ($W$) jeder Periode berechnet sich aus dem Umsatz abzüglich der Kannibalisierungseffekte (Kunden, die vom profitableren traditionellen Kanal wechseln) und der Fixkosten.
     
     $$W(t) = (N(t) \cdot ARPU) - (\Delta N(t) \cdot \kappa \cdot \Delta CM) - \text{Fixed Costs}$$
     
@@ -219,37 +239,6 @@ if page == "Modell-Beschreibung":
     * **2. Fighter (Option B):** Aggressive Strategie (niedrige Preise, hohes Marketing, hohes Risiko). Startpunkt für die dynamischen Optionen.
     * **3. Switch Option (Option C):** Startet als "Fighter". Wenn das Wachstum enttäuscht, **wechselt** das Management zur "Standard"-Strategie (Preise rauf, Marketing runter).
     * **4. Abandon Option (Option D):** Startet als "Fighter". Wenn das Wachstum enttäuscht, wird das Projekt **sofort gestoppt** (Liquidation).
-    """)
-    
-    st.header("3. Ablauf einer Simulation (Schritt-für-Schritt)")
-    st.info("Dieser Prozess wird in der Monte-Carlo-Simulation tausendfach wiederholt.")
-    
-    st.markdown("""
-    1.  **Initialisierung ($t=0$):** Alle Szenarien starten mit 1 Kunden.
-    2.  **Jahres-Schleife ($t=1 \dots T$):**
-        * Das Modell berechnet die *potenzielle* Akquise für das aktuelle Jahr basierend auf den aktuellen Parametern ($p, q, C$).
-        * **Trigger-Prüfung:** Das Modell prüft, ob die Performance unter den Erwartungen liegt.
-            * *Trigger:* Ist das durchschnittliche bisherige Wachstum kleiner als der Grenzwert (z.B. 5%)?
-            * *Zeitpunkt:* Entweder ab einem bestimmten Jahr (z.B. Jahr 3) oder fortlaufend.
-        * **Entscheidung (nur für Option C & D):**
-            * **Kein Trigger:** Strategie läuft unverändert weiter.
-            * **Trigger ausgelöst (Switch):**
-                1.  Preiserhöhung wird berechnet ($\Delta P$).
-                2.  **Preisschock:** Ein Teil der Bestandskunden ($N_{t-1}$) wandert sofort ab (abhängig von der Konfiguration der "Schock-Matrix").
-                3.  **Parameter-Wechsel:** Alle Parameter ($p, q, ARPU, Kosten$) werden auf die Werte der "Standard"-Strategie gesetzt.
-                4.  **Reputationsschaden:** Das neue $q$ wird reduziert (negativer Word-of-Mouth durch Preiserhöhung).
-            * **Trigger ausgelöst (Abandon):**
-                1.  Projekt wird beendet.
-                2.  Kundenbestand $N$ fällt auf 0.
-                3.  Umsatz und Kosten fallen auf 0.
-        * **Finale Berechnung:** Bestand und Finanzwert $W(t)$ für das Jahr werden festgeschrieben.
-    """)
-    
-    st.header("4. Parameter-Glossar & Konfiguration")
-    st.markdown("""
-    * **Grandfathering:** Wenn aktiviert, behalten Bestandskunden beim "Switch" ihren alten Preis. Das verhindert den "Churn-Schock", reduziert aber das Umsatzwachstum.
-    * **Preisschock-Matrix:** Definiert, wie empfindlich Kunden auf Preiserhöhungen beim Strategiewechsel reagieren (in 3 Zonen: Sicherheitszone, Warnzone, Gefahrenzone).
-    * **Cochran Sampling:** Die Anzahl der Simulationen wird automatisch berechnet, um statistisch signifikante Ergebnisse (95% Konfidenz, 1% Fehler) zu garantieren.
     """)
 
 # --- SEITE: SIMULATION & ANALYSE ---
@@ -382,15 +371,26 @@ elif page == "Simulation & Analyse":
 
         for idx, (name, n, p_rng, mode, fb_rng, col) in enumerate(scenarios):
             sim_sums, sim_inputs, all_N, all_W = [], [], [], []
+            # Matrix für durchschnittliche Kohorten (T x T)
+            avg_cohorts = np.zeros((T_in, T_in))
+            
             exercised_count = 0
             for _ in range(n):
                 curr = {k: rnd(v) for k, v in p_rng.items()}
                 fb = {k: rnd(v) for k, v in fb_rng.items()} if fb_rng else None
-                N_t, W_t, tot, exc = run_simulation(**curr, start=1, T=T_in, mode=mode, trigger_val=trig_val_in, 
+                
+                N_t, W_t, tot, exc, coh_mat = run_simulation(**curr, start=1, T=T_in, mode=mode, trigger_val=trig_val_in, 
                                                     fallback_params=fb, check_mode=check_mode_in, check_year=check_year_in, 
                                                     growth_metric=metric_in, switch_config=switch_config_dict)
                 sim_sums.append(tot); all_N.append(N_t); all_W.append(W_t); sim_inputs.append(curr)
+                
+                # Kohorten aufsummieren
+                avg_cohorts += coh_mat
+                
                 if exc: exercised_count += 1
+            
+            # Durchschnitt bilden
+            avg_cohorts /= n
             bar.progress((idx+1)/4)
             
             arr_N = np.array(all_N); arr_W = np.array(all_W)
@@ -405,6 +405,7 @@ elif page == "Simulation & Analyse":
             res_store[name] = {
                 "n": n, "sums": sim_sums, "avg_N": np.mean(all_N, axis=0), "avg_W": np.mean(all_W, axis=0),
                 "p5_N": p5_N, "p95_N": p95_N, "p5_W": p5_W, "p95_W": p95_W,
+                "cohorts": avg_cohorts, # Speichern der Kohorten
                 "tornado": (torn, base_v), "regression": (reg, r2), "color": col,
                 "mean": np.mean(sim_sums), "std": np.std(sim_sums), 
                 "min": np.min(sim_sums), "max": np.max(sim_sums), "var5": np.percentile(sim_sums, 5),
@@ -536,9 +537,47 @@ elif page == "Simulation & Analyse":
             st.download_button("📄 PDF Report Download", st.session_state.pdf_buffer.getvalue(), 
                                f"Report_{datetime.datetime.now().strftime('%H%M')}.pdf", "application/pdf", use_container_width=True)
 
+        # ==========================================
+        # NEU: COHORT ANALYSIS VISUALIZATION
+        # ==========================================
+        st.markdown("---")
+        st.header("📊 Cohort Analysis: Revenue Retention")
+        
 
+[Image of cohort analysis chart]
 
+        st.markdown("Hier sehen Sie, wie sich die Kundenkohorten über die Zeit entwickeln (gestapelt). Jede Schicht repräsentiert Kunden, die im gleichen Jahr gewonnen wurden.")
 
-
-
-
+        avail_scenarios = list(res.keys())
+        # Standardmäßig Szenario 3 (Switch) oder 2 (Fighter) vorwählen
+        def_idx = 2 if len(avail_scenarios) > 2 else 0
+        selected_scen = st.selectbox("Wähle Strategie für Kohorten-Analyse:", avail_scenarios, index=def_idx)
+        
+        cohort_data = res[selected_scen]['cohorts'] # T x T Matrix
+        
+        fig_coh, ax_coh = plt.subplots(figsize=(10, 6))
+        years = np.arange(cohort_data.shape[1])
+        
+        # Labels nur für jedes 2. Jahr, um Überladung zu vermeiden
+        lbls = [f"Cohort Year {i}" if i % 2 == 0 else "" for i in range(len(years))]
+        pal = plt.cm.viridis(np.linspace(0, 1, len(years)))
+        
+        ax_coh.stackplot(years, cohort_data, labels=lbls, colors=pal, alpha=0.8)
+        
+        ax_coh.set_title(f"Active Customers by Cohort - {selected_scen}")
+        ax_coh.set_xlabel("Simulation Year")
+        ax_coh.set_ylabel("Active Customers")
+        ax_coh.set_xlim(0, len(years)-1)
+        
+        # Legende aufräumen
+        handles, labels = ax_coh.get_legend_handles_labels()
+        unique = [(h, l) for h, l in zip(handles, labels) if l != ""]
+        ax_coh.legend(*zip(*unique), loc='upper left', bbox_to_anchor=(1, 1), title="Acquisition Year")
+        
+        ax_coh.grid(True, alpha=0.3)
+        st.pyplot(fig_coh)
+        
+        if "Switch" in selected_scen:
+            st.info("💡 Hinweis: Falls die Switch-Option ausgelöst wurde, sehen Sie einen 'Knick' über alle Schichten hinweg (Preisschock auf Bestandskunden).")
+        elif "Abandon" in selected_scen:
+             st.info("💡 Hinweis: Bei der Abandon-Option fallen alle Schichten schlagartig auf 0.")
