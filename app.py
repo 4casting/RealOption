@@ -5,7 +5,6 @@ import numpy as np
 import pandas as pd
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import StandardScaler
-from scipy.stats import norm # Für die Glockenkurve
 import io
 import math
 import datetime
@@ -20,14 +19,15 @@ if 'simulation_results' not in st.session_state: st.session_state.simulation_res
 if 'pdf_buffer' not in st.session_state: st.session_state.pdf_buffer = None
 
 # ==========================================
-# 1. KERN-LOGIK (SIMULATION MIT KOHORTEN & WACHSTUM)
+# 1. KERN-LOGIK (SIMULATION MIT KOHORTEN)
 # ==========================================
 def run_simulation(M, p, q, C, ARPU, kappa, Delta_CM, Fixed_Cost, start, T, 
                    mode='static', trigger_val=0.05, fallback_params=None,
                    check_mode='continuous', check_year=3, growth_metric='share_of_m',
                    switch_config=None):
     
-    # Initialsierung der Cohort Matrix: Zeilen = Startjahr, Spalten = Laufzeitjahr
+    # Initialsierung der Cohort Matrix
+    # Zeile = Startjahr, Spalte = Laufzeitjahr
     cohorts = np.zeros((T, T))
     cohorts[0, 0] = start 
 
@@ -78,6 +78,7 @@ def run_simulation(M, p, q, C, ARPU, kappa, Delta_CM, Fixed_Cost, start, T,
                     option_exercised = True
                     
                     if mode == 'switch' and fallback_params and switch_config:
+                        # Switch Logic
                         target_ARPU = fallback_params['ARPU']
                         delta_p = (target_ARPU - curr_ARPU) / curr_ARPU if curr_ARPU > 0 else 0.0
                         
@@ -91,7 +92,6 @@ def run_simulation(M, p, q, C, ARPU, kappa, Delta_CM, Fixed_Cost, start, T,
                         shock_factor = switch_config[f'shock_{zone_prefix}{suffix}']
                         q_multiplier = switch_config[f'q_mult_{zone_prefix}{suffix}']
                         
-                        # Neue Parameter setzen
                         curr_p = fallback_params['p']
                         curr_C = fallback_params['C']
                         curr_ARPU = fallback_params['ARPU']
@@ -117,13 +117,15 @@ def run_simulation(M, p, q, C, ARPU, kappa, Delta_CM, Fixed_Cost, start, T,
         growth_history.append(current_rate)
 
         # --- UPDATE KOHORTEN ---
+        # 1. Retention auf alte Kohorten
         eff_retention = (1.0 - shock_applied) * (1.0 - curr_C)
-        
         for start_year in range(t):
             cohorts[start_year, t] = cohorts[start_year, t-1] * eff_retention
             
+        # 2. Neue Kohorte (New Adopters)
         cohorts[t, t] = potential_acquisition
         
+        # 3. Summe
         N[t] = np.sum(cohorts[:, t])
         if N[t] > curr_M: N[t] = curr_M
         
@@ -131,10 +133,7 @@ def run_simulation(M, p, q, C, ARPU, kappa, Delta_CM, Fixed_Cost, start, T,
         cannib = potential_acquisition * curr_kappa * curr_Delta_CM
         W[t] = revenue - cannib - curr_FC
     
-    # NEU: Durchschnittliche Wachstumsrate dieses Pfades berechnen
-    avg_path_growth = np.mean(growth_history) if growth_history else 0.0
-        
-    return N, W, sum(W), option_exercised, cohorts, avg_path_growth
+    return N, W, sum(W), option_exercised, cohorts
 
 # ==========================================
 # 2. STATISTIK HELPER
@@ -147,8 +146,8 @@ def calculate_cochran_n(params_dict, T, mode='static', fallback=None, trigger=0.
     for _ in range(pilot_n):
         curr = {k: get_val(v) for k, v in params_dict.items()}
         curr_fb = {k: get_val(v) for k, v in fallback.items()} if fallback else None
-        # Unpacking mit 6 Variablen
-        _, _, val, _, _, _ = run_simulation(**curr, start=1, T=T, mode=mode, trigger_val=trigger, 
+        # Unpacking 5 values
+        _, _, val, _, _ = run_simulation(**curr, start=1, T=T, mode=mode, trigger_val=trigger, 
                                         fallback_params=curr_fb, check_mode=c_mode, check_year=c_year, 
                                         growth_metric=g_metric, switch_config=sw_conf)
         results.append(val)
@@ -164,21 +163,22 @@ def get_tornado_data(base_params, ranges, T, mode, trigger, fallback_ranges, c_m
     base_inputs = {k: mid(v) for k, v in ranges.items()}
     fb_inputs = {k: mid(v) for k, v in fallback_ranges.items()} if fallback_ranges else None
     
-    # Update unpacking (6 Vars)
-    _, _, base_val, _, _, _ = run_simulation(**base_inputs, start=1, T=T, mode=mode, trigger_val=trigger, 
-                                         fallback_params=fb_inputs, check_mode=c_mode, check_year=c_year, 
-                                         growth_metric=g_metric, switch_config=sw_conf)
+    # Helper um nur den NPV zu holen
+    def run_sim_val(in_p):
+        return run_simulation(**in_p, start=1, T=T, mode=mode, trigger_val=trigger, 
+                              fallback_params=fb_inputs, check_mode=c_mode, check_year=c_year, 
+                              growth_metric=g_metric, switch_config=sw_conf)[2]
+    
+    base_val = run_sim_val(base_inputs)
     data = []
     for param, val_range in ranges.items():
         if not isinstance(val_range, tuple): continue
         low_inputs = base_inputs.copy(); low_inputs[param] = val_range[0]
-        _, _, v_low, _, _, _ = run_simulation(**low_inputs, start=1, T=T, mode=mode, trigger_val=trigger, 
-                                          fallback_params=fb_inputs, check_mode=c_mode, check_year=c_year, 
-                                          growth_metric=g_metric, switch_config=sw_conf)
         high_inputs = base_inputs.copy(); high_inputs[param] = val_range[1]
-        _, _, v_high, _, _, _ = run_simulation(**high_inputs, start=1, T=T, mode=mode, trigger_val=trigger, 
-                                           fallback_params=fb_inputs, check_mode=c_mode, check_year=c_year, 
-                                           growth_metric=g_metric, switch_config=sw_conf)
+        
+        v_low = run_sim_val(low_inputs)
+        v_high = run_sim_val(high_inputs)
+        
         data.append({"Parameter": param, "Low": v_low - base_val, "High": v_high - base_val, "Range": abs(v_high - v_low)})
     return pd.DataFrame(data).sort_values(by="Range", ascending=True), base_val
 
@@ -329,7 +329,7 @@ elif page == "Simulation & Analyse":
         def rnd(v): return np.random.triangular(v[0], (v[0]+v[1])/2, v[1]) if isinstance(v, tuple) else v
 
         for idx, (name, n, p_rng, mode, fb_rng, col) in enumerate(scenarios):
-            sim_sums, sim_inputs, all_N, all_W, sim_growth_rates = [], [], [], [], []
+            sim_sums, sim_inputs, all_N, all_W = [], [], [], []
             avg_cohorts = np.zeros((T_in, T_in))
             
             exercised_count = 0
@@ -337,12 +337,11 @@ elif page == "Simulation & Analyse":
                 curr = {k: rnd(v) for k, v in p_rng.items()}
                 fb = {k: rnd(v) for k, v in fb_rng.items()} if fb_rng else None
                 
-                N_t, W_t, tot, exc, coh_mat, avg_gr = run_simulation(**curr, start=1, T=T_in, mode=mode, trigger_val=trig_val_in, 
+                N_t, W_t, tot, exc, coh_mat = run_simulation(**curr, start=1, T=T_in, mode=mode, trigger_val=trig_val_in, 
                                                     fallback_params=fb, check_mode=check_mode_in, check_year=check_year_in, 
                                                     growth_metric=metric_in, switch_config=switch_config_dict)
                 sim_sums.append(tot); all_N.append(N_t); all_W.append(W_t); sim_inputs.append(curr)
                 
-                sim_growth_rates.append(avg_gr) # NEU: Wachstumsrate speichern
                 avg_cohorts += coh_mat
                 if exc: exercised_count += 1
             
@@ -362,7 +361,6 @@ elif page == "Simulation & Analyse":
                 "n": n, "sums": sim_sums, "avg_N": np.mean(all_N, axis=0), "avg_W": np.mean(all_W, axis=0),
                 "p5_N": p5_N, "p95_N": p95_N, "p5_W": p5_W, "p95_W": p95_W,
                 "cohorts": avg_cohorts, 
-                "growth_dist": sim_growth_rates, # NEU
                 "tornado": (torn, base_v), "regression": (reg, r2), "color": col,
                 "mean": np.mean(sim_sums), "std": np.std(sim_sums), 
                 "min": np.min(sim_sums), "max": np.max(sim_sums), "var5": np.percentile(sim_sums, 5),
@@ -427,28 +425,32 @@ elif page == "Simulation & Analyse":
 
             # NEU: ANHANG - COHORT ANALYSES
             for k, d in res_store.items():
-                fig_c, ax_c = plt.subplots(figsize=(8.27, 6))
-                cohort_data = d['cohorts']
-                years = np.arange(cohort_data.shape[1])
-                lbls = [f"Y{i}" if i % 2 == 0 else "" for i in range(len(years))]
-                pal = plt.cm.viridis(np.linspace(0, 1, len(years)))
-                ax_c.stackplot(years, cohort_data, labels=lbls, colors=pal, alpha=0.8)
-                ax_c.set_title(f"Appendix: Cohort Analysis - {k}")
-                ax_c.set_ylabel("Customers"); ax_c.grid(True, alpha=0.3)
-                pdf.savefig(fig_c); plt.close(fig_c)
+                if 'cohorts' in d: 
+                    fig_c, ax_c = plt.subplots(figsize=(8.27, 6))
+                    cohort_data = d['cohorts']
+                    years = np.arange(cohort_data.shape[1])
+                    lbls = [f"Y{i}" if i % 2 == 0 else "" for i in range(len(years))]
+                    pal = plt.cm.viridis(np.linspace(0, 1, len(years)))
+                    ax_c.stackplot(years, cohort_data, labels=lbls, colors=pal, alpha=0.8)
+                    ax_c.set_title(f"Appendix: Cohort Analysis - {k}")
+                    ax_c.set_ylabel("Customers"); ax_c.grid(True, alpha=0.3)
+                    pdf.savefig(fig_c); plt.close(fig_c)
 
-            # NEU: ANHANG - GROWTH BELL CURVES
+            # NEU: ANHANG - ADOPTION CURVES (Bell Curves)
             for k, d in res_store.items():
-                fig_g, ax_g = plt.subplots(figsize=(8.27, 6))
-                gr_data = d['growth_dist']
-                mu, std = norm.fit(gr_data)
-                ax_g.hist(gr_data, bins=30, density=True, alpha=0.6, color=d['color'], edgecolor='white')
-                xmin, xmax = ax_g.get_xlim(); x = np.linspace(xmin, xmax, 100)
-                p = norm.pdf(x, mu, std)
-                ax_g.plot(x, p, 'k', linewidth=2)
-                ax_g.set_title(f"Appendix: Growth Rate Distribution - {k}\nMean: {mu:.2%}, Std: {std:.2%}")
-                ax_g.set_xlabel("Average Annual Growth Rate"); ax_g.grid(True, alpha=0.3)
-                pdf.savefig(fig_g); plt.close(fig_g)
+                if 'cohorts' in d:
+                    fig_g, ax_g = plt.subplots(figsize=(8.27, 6))
+                    # Diagonal der Kohorten-Matrix = Neu gewonnene Kunden pro Jahr
+                    adoption_curve = d['cohorts'].diagonal()
+                    years = np.arange(len(adoption_curve))
+                    
+                    ax_g.plot(years, adoption_curve, marker='o', color=d['color'], linewidth=2)
+                    ax_g.fill_between(years, 0, adoption_curve, color=d['color'], alpha=0.2)
+                    
+                    ax_g.set_title(f"Appendix: Adoption Curve (New Customers) - {k}")
+                    ax_g.set_xlabel("Period (Year)"); ax_g.set_ylabel("New Acquired Customers")
+                    ax_g.grid(True, alpha=0.3)
+                    pdf.savefig(fig_g); plt.close(fig_g)
 
         st.session_state.pdf_buffer = buf
 
@@ -484,7 +486,7 @@ elif page == "Simulation & Analyse":
             ax_w.legend(); ax_w.grid(True, alpha=0.3); st.pyplot(fig_w)
 
         if st.session_state.pdf_buffer:
-            st.download_button("📄 PDF Report Download (inkl. Kohorten & Verteilungen)", st.session_state.pdf_buffer.getvalue(), 
+            st.download_button("📄 PDF Report Download (inkl. Kohorten & Adoptionskurven)", st.session_state.pdf_buffer.getvalue(), 
                                f"Report_{datetime.datetime.now().strftime('%H%M')}.pdf", "application/pdf", use_container_width=True)
 
         # ==========================================
@@ -497,43 +499,40 @@ elif page == "Simulation & Analyse":
         def_idx = 2 if len(avail_scenarios) > 2 else 0
         selected_scen = st.selectbox("Wähle Strategie für Detail-Analyse:", avail_scenarios, index=def_idx)
         
-        # ZWEI SPALTEN FÜR GRAFIKEN
-        col_deep1, col_deep2 = st.columns(2)
-        
-        with col_deep1:
-            st.subheader("1. Kohorten-Analyse (Stacked)")
-            cohort_data = res[selected_scen]['cohorts']
-            fig_coh, ax_coh = plt.subplots(figsize=(6, 4))
-            years = np.arange(cohort_data.shape[1])
-            lbls = [f"Y{i}" if i % 2 == 0 else "" for i in range(len(years))]
-            pal = plt.cm.viridis(np.linspace(0, 1, len(years)))
-            ax_coh.stackplot(years, cohort_data, labels=lbls, colors=pal, alpha=0.8)
-            ax_coh.set_title("Active Customers by Cohort")
-            ax_coh.set_xlabel("Year"); ax_coh.set_ylabel("Count")
-            ax_coh.grid(True, alpha=0.3)
-            st.pyplot(fig_coh)
+        # Robust check
+        if 'cohorts' not in res[selected_scen]:
+            st.warning("⚠️ Bitte Simulation neu starten, um die neuen Grafiken zu laden.")
+        else:
+            col_deep1, col_deep2 = st.columns(2)
+            
+            with col_deep1:
+                st.subheader("1. Kohorten-Analyse (Stacked)")
+                cohort_data = res[selected_scen]['cohorts']
+                fig_coh, ax_coh = plt.subplots(figsize=(6, 4))
+                years = np.arange(cohort_data.shape[1])
+                lbls = [f"Y{i}" if i % 2 == 0 else "" for i in range(len(years))]
+                pal = plt.cm.viridis(np.linspace(0, 1, len(years)))
+                ax_coh.stackplot(years, cohort_data, labels=lbls, colors=pal, alpha=0.8)
+                ax_coh.set_title("Active Customers by Cohort")
+                ax_coh.set_xlabel("Year"); ax_coh.set_ylabel("Count")
+                ax_coh.grid(True, alpha=0.3)
+                st.pyplot(fig_coh)
 
-        with col_deep2:
-            st.subheader("2. Wachstums-Verteilung (Glockenkurve)")
-            gr_data = res[selected_scen]['growth_dist']
-            
-            fig_bell, ax_bell = plt.subplots(figsize=(6, 4))
-            
-            # Histogramm
-            mu, std = norm.fit(gr_data)
-            ax_bell.hist(gr_data, bins=25, density=True, alpha=0.6, color='skyblue', edgecolor='white', label="Simulationen")
-            
-            # Glockenkurve (PDF)
-            xmin, xmax = ax_bell.get_xlim()
-            x = np.linspace(xmin, xmax, 100)
-            p = norm.pdf(x, mu, std)
-            ax_bell.plot(x, p, 'k', linewidth=2, label=f"Normalvert. (µ={mu:.1%})")
-            
-            ax_bell.set_title("Verteilung der durchschn. Wachstumsrate")
-            ax_bell.set_xlabel("Wachstumsrate (avg. p.a.)")
-            ax_bell.legend()
-            ax_bell.grid(True, alpha=0.3)
-            st.pyplot(fig_bell)
-            
-        if "Switch" in selected_scen:
-            st.info("💡 Hinweis Switch: Der Knick in den Kohorten entsteht durch den Preisschock.")
+            with col_deep2:
+                st.subheader("2. Adoptions-Kurve (Glockenkurve)")
+                # Diagonal = Neue Kunden pro Jahr
+                adoption_curve = res[selected_scen]['cohorts'].diagonal()
+                years = np.arange(len(adoption_curve))
+                
+                fig_bell, ax_bell = plt.subplots(figsize=(6, 4))
+                ax_bell.plot(years, adoption_curve, marker='o', linewidth=2, color='tab:orange', label="New Customers")
+                ax_bell.fill_between(years, 0, adoption_curve, color='tab:orange', alpha=0.2)
+                
+                ax_bell.set_title("New Customers acquired per Year")
+                ax_bell.set_xlabel("Period (Year)")
+                ax_bell.set_ylabel("Count")
+                ax_bell.legend(); ax_bell.grid(True, alpha=0.3)
+                st.pyplot(fig_bell)
+                
+            if "Switch" in selected_scen:
+                st.info("💡 Hinweis: Der Verlauf der Kurven zeigt direkt den Einfluss der Strategie-Änderung.")
