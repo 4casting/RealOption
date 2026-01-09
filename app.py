@@ -147,7 +147,7 @@ def calculate_cochran_n(params_dict, T, mode='static', fallback=None, trigger=0.
     for _ in range(pilot_n):
         curr = {k: get_val(v) for k, v in params_dict.items()}
         curr_fb = {k: get_val(v) for k, v in fallback.items()} if fallback else None
-        # Unpacking mit 6 Variablen (Neu: _, _)
+        # Unpacking mit 6 Variablen
         _, _, val, _, _, _ = run_simulation(**curr, start=1, T=T, mode=mode, trigger_val=trigger, 
                                         fallback_params=curr_fb, check_mode=c_mode, check_year=c_year, 
                                         growth_metric=g_metric, switch_config=sw_conf)
@@ -514,10 +514,6 @@ elif page == "Simulation & Analyse":
             st.pyplot(fig_coh)
 
         with col_deep2:
-            
-
-[Image of bell curve normal distribution]
-
             st.subheader("2. Wachstums-Verteilung (Glockenkurve)")
             gr_data = res[selected_scen]['growth_dist']
             
