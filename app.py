@@ -543,9 +543,6 @@ elif page == "Simulation & Analyse":
         st.markdown("---")
         st.header("📊 Cohort Analysis: Revenue Retention")
         
-
-[Image of cohort analysis chart]
-
         st.markdown("Hier sehen Sie, wie sich die Kundenkohorten über die Zeit entwickeln (gestapelt). Jede Schicht repräsentiert Kunden, die im gleichen Jahr gewonnen wurden.")
 
         avail_scenarios = list(res.keys())
