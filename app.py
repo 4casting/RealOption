@@ -37,6 +37,7 @@ def run_simulation(M, p, q, C, ARPU, kappa, Delta_CM, Fixed_Cost, start, T,
     W[0] = N[0] * ARPU - Fixed_Cost
 
     option_exercised = False
+    project_is_dead = False
     
     curr_p, curr_q, curr_C = p, q, C
     curr_ARPU, curr_kappa, curr_Delta_CM = ARPU, kappa, Delta_CM
@@ -45,6 +46,10 @@ def run_simulation(M, p, q, C, ARPU, kappa, Delta_CM, Fixed_Cost, start, T,
     growth_history = []
 
     for t in range(1, T):
+        if project_is_dead:
+            N[t] = 0.0; W[t] = 0.0
+            continue 
+
         # Bestand aus Vorperiode berechnen
         N_prev = np.sum(cohorts[:, t-1])
         
@@ -103,6 +108,11 @@ def run_simulation(M, p, q, C, ARPU, kappa, Delta_CM, Fixed_Cost, start, T,
                         N_prev_sim = N_prev * (1.0 - shock_applied)
                         potential_acquisition = (curr_p + curr_q * (N_prev_sim / curr_M)) * (curr_M - N_prev_sim)
                         if potential_acquisition < 0: potential_acquisition = 0
+                        
+                    elif mode == 'abandon':
+                        project_is_dead = True
+                        N[t] = 0.0; W[t] = 0.0
+                        continue
 
         growth_history.append(current_rate)
 
@@ -308,11 +318,13 @@ elif page == "Simulation & Analyse":
             n_A = calculate_cochran_n(params_A, T_in, 'static')
             n_B = calculate_cochran_n(params_B, T_in, 'static')
             n_Sw = calculate_cochran_n(params_B, T_in, 'switch', fallback=params_A, trigger=trig_val_in, c_mode=check_mode_in, c_year=check_year_in, g_metric=metric_in, sw_conf=switch_config_dict)
+            n_Ab = calculate_cochran_n(params_B, T_in, 'abandon', trigger=trig_val_in, c_mode=check_mode_in, c_year=check_year_in, g_metric=metric_in, sw_conf=switch_config_dict)
         
         res_store = {}; bar = st.progress(0)
         scenarios = [("1. Standard (A)", n_A, params_A, 'static', None, 'tab:blue'),
                      ("2. Fighter (B)", n_B, params_B, 'static', None, 'tab:red'),
-                     ("3. Switch Option", n_Sw, params_B, 'switch', params_A, 'tab:green')]
+                     ("3. Switch Option", n_Sw, params_B, 'switch', params_A, 'tab:green'),
+                     ("4. Abandon Option", n_Ab, params_B, 'abandon', None, 'black')]
         
         def rnd(v): return np.random.triangular(v[0], (v[0]+v[1])/2, v[1]) if isinstance(v, tuple) else v
 
@@ -326,15 +338,15 @@ elif page == "Simulation & Analyse":
                 fb = {k: rnd(v) for k, v in fb_rng.items()} if fb_rng else None
                 
                 N_t, W_t, tot, exc, coh_mat = run_simulation(**curr, start=1, T=T_in, mode=mode, trigger_val=trig_val_in, 
-                                                            fallback_params=fb, check_mode=check_mode_in, check_year=check_year_in, 
-                                                            growth_metric=metric_in, switch_config=switch_config_dict)
+                                                    fallback_params=fb, check_mode=check_mode_in, check_year=check_year_in, 
+                                                    growth_metric=metric_in, switch_config=switch_config_dict)
                 sim_sums.append(tot); all_N.append(N_t); all_W.append(W_t); sim_inputs.append(curr)
                 
                 avg_cohorts += coh_mat
                 if exc: exercised_count += 1
             
             avg_cohorts /= n
-            bar.progress((idx+1)/3)
+            bar.progress((idx+1)/4)
             
             arr_N = np.array(all_N); arr_W = np.array(all_W)
             p5_N = np.percentile(arr_N, 5, axis=0); p95_N = np.percentile(arr_N, 95, axis=0)
